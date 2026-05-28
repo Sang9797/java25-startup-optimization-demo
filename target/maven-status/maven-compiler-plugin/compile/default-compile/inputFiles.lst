@@ -1,0 +1,11 @@
+/home/sangle/codex/src/main/java/com/example/startupdemo/app/StartupInfo.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/app/StartupOptimizationApplication.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/compute/ComputeService.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/config/ApplicationConfig.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/crac/CracLifecycleResource.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/http/ApplicationHttpServer.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/http/ComputeHandler.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/http/HealthHandler.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/http/HelloHandler.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/http/JsonHandler.java
+/home/sangle/codex/src/main/java/com/example/startupdemo/util/Json.java
