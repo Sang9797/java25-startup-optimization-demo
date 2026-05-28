@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: JDK 25 Startup Dashboards
+    orgId: 1
+    folder: Startup Monitoring
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

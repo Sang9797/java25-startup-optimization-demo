@@ -12,11 +12,11 @@ rm -f "${CLASSLIST}"
 
 CP="$(app_classpath)"
 run_until_healthy_then_stop "appcds-classlist" "${LOG_FILE}" \
+  env APP_RUNTIME_MODE=appcds APP_JDK=25 APP_NAME=gateway-demo \
   java \
   -XX:DumpLoadedClassList="${CLASSLIST}" \
   -Xlog:class+load=info \
   -Ddemo.port="${APP_PORT}" \
-  -Ddemo.profile=appcds-classlist \
   -cp "${CP}" \
   "${MAIN_CLASS}"
 

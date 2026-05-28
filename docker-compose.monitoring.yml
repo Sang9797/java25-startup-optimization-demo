@@ -1,0 +1,118 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: jdk25-startup-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: jdk25-startup-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_DEFAULT_THEME: light
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+  gateway-baseline:
+    profiles: ["apps", "baseline"]
+    build:
+      context: .
+      dockerfile: Dockerfile.jvm
+      args:
+        BASE_IMAGE: ${JAVA_DOCKER_BASE_IMAGE:-eclipse-temurin:25-jdk}
+    image: jdk25-startup-gateway-demo:latest
+    container_name: gateway-baseline
+    environment:
+      APP_RUNTIME_MODE: baseline
+      APP_NAME: gateway-demo
+      APP_JDK: "25"
+      SERVER_PORT: "8080"
+    ports:
+      - "8081:8080"
+
+  gateway-cds:
+    profiles: ["apps", "cds"]
+    image: jdk25-startup-gateway-demo:latest
+    container_name: gateway-cds
+    environment:
+      APP_RUNTIME_MODE: cds
+      APP_NAME: gateway-demo
+      APP_JDK: "25"
+      SERVER_PORT: "8080"
+    command:
+      - -Xshare:on
+      - -XX:SharedArchiveFile=/app/build/runtime-artifacts/cds-base.jsa
+      - -cp
+      - /app/app.jar:/app/lib/*
+      - com.example.startupdemo.app.StartupOptimizationApplication
+    ports:
+      - "8082:8080"
+
+  gateway-appcds:
+    profiles: ["apps", "appcds"]
+    image: jdk25-startup-gateway-demo:latest
+    container_name: gateway-appcds
+    environment:
+      APP_RUNTIME_MODE: appcds
+      APP_NAME: gateway-demo
+      APP_JDK: "25"
+      SERVER_PORT: "8080"
+    command:
+      - -Xshare:on
+      - -XX:SharedArchiveFile=/app/build/runtime-artifacts/appcds.jsa
+      - -cp
+      - /app/app.jar:/app/lib/*
+      - com.example.startupdemo.app.StartupOptimizationApplication
+    ports:
+      - "8083:8080"
+
+  gateway-crac:
+    profiles: ["apps", "crac"]
+    image: jdk25-startup-gateway-demo:latest
+    container_name: gateway-crac
+    environment:
+      APP_RUNTIME_MODE: crac
+      APP_NAME: gateway-demo
+      APP_JDK: "25"
+      SERVER_PORT: "8080"
+    command:
+      - -XX:CRaCRestoreFrom=/app/build/runtime-artifacts/crac-checkpoint
+    ports:
+      - "8084:8080"
+
+  gateway-native:
+    profiles: ["apps", "native"]
+    build:
+      context: .
+      dockerfile: Dockerfile.native
+      target: runtime
+    image: jdk25-startup-gateway-native:latest
+    container_name: gateway-native
+    environment:
+      APP_RUNTIME_MODE: native
+      APP_NAME: gateway-demo
+      APP_JDK: "25"
+      SERVER_PORT: "8080"
+    ports:
+      - "8085:8080"
+
+volumes:
+  prometheus-data:
+  grafana-data:

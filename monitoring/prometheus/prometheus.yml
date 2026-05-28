@@ -1,0 +1,54 @@
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+  scrape_timeout: 1s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: gateway-baseline
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8081"]
+        labels:
+          mode: baseline
+          app: gateway-demo
+          jdk: "25"
+
+  - job_name: gateway-cds
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8082"]
+        labels:
+          mode: cds
+          app: gateway-demo
+          jdk: "25"
+
+  - job_name: gateway-appcds
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8083"]
+        labels:
+          mode: appcds
+          app: gateway-demo
+          jdk: "25"
+
+  - job_name: gateway-crac
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8084"]
+        labels:
+          mode: crac
+          app: gateway-demo
+          jdk: "25"
+
+  - job_name: gateway-native
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8085"]
+        labels:
+          mode: native
+          app: gateway-demo
+          jdk: "25"

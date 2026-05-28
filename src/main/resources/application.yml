@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: gateway-demo
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: ${SERVER_PORT:${demo.port:8080}}
+
+gateway:
+  app-name: ${APP_NAME:gateway-demo}
+  jdk: ${APP_JDK:25}
+  runtime-mode: ${APP_RUNTIME_MODE:baseline}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  metrics:
+    tags:
+      app: ${gateway.app-name}
+      mode: ${gateway.runtime-mode}
+      jdk: ${gateway.jdk}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true

@@ -1,0 +1,16 @@
+# Maven / Java build output
+target/
+
+# Demo runtime artifacts
+build/native/
+build/runtime-artifacts/*
+!build/runtime-artifacts/.gitkeep
+
+# Logs and benchmark output
+logs/*
+!logs/.gitkeep
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+*.iml

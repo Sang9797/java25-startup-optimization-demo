@@ -16,11 +16,11 @@ fi
 
 CP="$(app_classpath)"
 run_until_healthy_then_stop "appcds" "${LOG_FILE}" \
+  env APP_RUNTIME_MODE=appcds APP_JDK=25 APP_NAME=gateway-demo \
   java \
   -Xshare:on \
   -XX:SharedArchiveFile="${ARCHIVE}" \
   -Xlog:cds=info,class+load=info \
   -Ddemo.port="${APP_PORT}" \
-  -Ddemo.profile=appcds \
   -cp "${CP}" \
   "${MAIN_CLASS}"

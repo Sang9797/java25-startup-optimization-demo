@@ -1,0 +1,22 @@
+FROM ghcr.io/graalvm/native-image-community:25 AS native-builder
+
+WORKDIR /workspace
+RUN microdnf install -y maven
+COPY pom.xml ./
+RUN mvn -q -DskipTests dependency:go-offline
+COPY src src
+RUN mvn -Pnative -DskipTests native:compile
+RUN mkdir -p /native-output && cp target/gateway-native /native-output/gateway-native
+
+FROM gcr.io/distroless/base-debian12:nonroot AS runtime
+WORKDIR /app
+COPY --from=native-builder /native-output/gateway-native /app/gateway-native
+ENV APP_NAME=gateway-demo
+ENV APP_JDK=25
+ENV APP_RUNTIME_MODE=native
+ENV SERVER_PORT=8080
+EXPOSE 8080
+ENTRYPOINT ["/app/gateway-native"]
+
+FROM scratch AS export
+COPY --from=native-builder /native-output/gateway-native /gateway-native

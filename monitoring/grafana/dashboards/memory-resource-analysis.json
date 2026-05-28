@@ -1,0 +1,20 @@
+{
+  "uid": "memory-resource-analysis",
+  "title": "Memory & Resource Analysis",
+  "schemaVersion": 40,
+  "version": 1,
+  "refresh": "5s",
+  "timezone": "browser",
+  "time": {"from": "now-30m", "to": "now"},
+  "tags": ["memory", "gc", "resources"],
+  "panels": [
+    {"id": 1, "type": "timeseries", "title": "Heap memory used", "gridPos": {"x": 0, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "sum by (mode) (jvm_memory_used_bytes{app=\"gateway-demo\",jdk=\"25\",area=\"heap\"})"}], "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}},
+    {"id": 2, "type": "timeseries", "title": "Non-heap memory used", "gridPos": {"x": 8, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "sum by (mode) (jvm_memory_used_bytes{app=\"gateway-demo\",jdk=\"25\",area=\"nonheap\"})"}], "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}},
+    {"id": 3, "type": "timeseries", "title": "RSS/container process memory", "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (process_resident_memory_bytes{app=\"gateway-demo\",jdk=\"25\"})"}], "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}},
+    {"id": 4, "type": "timeseries", "title": "Loaded classes comparison", "gridPos": {"x": 0, "y": 8, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (jvm_classes_loaded_classes{app=\"gateway-demo\",jdk=\"25\"})"}]},
+    {"id": 5, "type": "timeseries", "title": "GC pause time", "gridPos": {"x": 8, "y": 8, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "sum by (mode) (rate(jvm_gc_pause_seconds_sum{app=\"gateway-demo\",jdk=\"25\"}[1m]))"}], "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}},
+    {"id": 6, "type": "timeseries", "title": "GC count", "gridPos": {"x": 16, "y": 8, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "sum by (mode) (rate(jvm_gc_pause_seconds_count{app=\"gateway-demo\",jdk=\"25\"}[1m]))"}]},
+    {"id": 7, "type": "timeseries", "title": "CPU usage comparison", "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (process_cpu_usage{app=\"gateway-demo\",jdk=\"25\"})"}], "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []}},
+    {"id": 8, "type": "table", "title": "Resource comparison table", "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (process_resident_memory_bytes{app=\"gateway-demo\",jdk=\"25\"})", "instant": true, "format": "table"}]}
+  ]
+}

@@ -10,9 +10,9 @@ LOG_FILE="${LOG_DIR}/02-baseline.log"
 CP="$(app_classpath)"
 
 run_until_healthy_then_stop "baseline" "${LOG_FILE}" \
+  env APP_RUNTIME_MODE=baseline APP_JDK=25 APP_NAME=gateway-demo \
   java \
   -Xlog:class+load=info \
   -Ddemo.port="${APP_PORT}" \
-  -Ddemo.profile=baseline \
   -cp "${CP}" \
   "${MAIN_CLASS}"

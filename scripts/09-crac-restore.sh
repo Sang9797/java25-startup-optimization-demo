@@ -14,6 +14,7 @@ if [[ ! -d "${CHECKPOINT_DIR}" ]]; then
 fi
 
 : > "${LOG_FILE}"
+env APP_RUNTIME_MODE=crac APP_JDK=25 APP_NAME=gateway-demo \
 java \
   -XX:CRaCRestoreFrom="${CHECKPOINT_DIR}" \
   > "${LOG_FILE}" 2>&1 &
@@ -25,6 +26,6 @@ if ! wait_for_health "${APP_PORT}" 40; then
   exit 1
 fi
 
-curl -fsS "http://127.0.0.1:${APP_PORT}/health" >> "${LOG_FILE}" 2>&1 || true
+curl -fsS "http://127.0.0.1:${APP_PORT}/actuator/health" >> "${LOG_FILE}" 2>&1 || true
 stop_pid "${PID}"
 echo "CRaC restore completed. Log: ${LOG_FILE}"

@@ -1,363 +1,484 @@
-# Java 25 Startup Optimization Demo
+# JDK 25 Startup Optimization Performance Lab
 
-This is a complete Maven demo project for comparing four startup modes:
+Spring Boot gateway benchmark project for comparing:
 
-- normal JVM startup
-- CDS startup with a custom base archive
-- AppCDS startup with application classes in the archive
-- CRaC restore startup from a checkpoint image
+- JVM baseline
+- CDS
+- AppCDS
+- CRaC restore
+- GraalVM Native Image
 
-The application is a plain Java HTTP service using `com.sun.net.httpserver.HttpServer`. It avoids Spring Boot so the CDS/AppCDS mechanics are visible and easy to reproduce.
+The app is intentionally small: a lightweight HTTP gateway/router with Actuator and Prometheus metrics. It is built to measure cold start, first request latency, memory, CPU, GC, loaded classes, and warm throughput.
 
-## Project Tree
+## Architecture
 
 ```text
-.
-├── pom.xml
-├── README.md
-├── src/main/java/com/example/startupdemo
-│   ├── app
-│   │   ├── StartupInfo.java
-│   │   └── StartupOptimizationApplication.java
-│   ├── compute
-│   │   └── ComputeService.java
-│   ├── config
-│   │   └── ApplicationConfig.java
-│   ├── crac
-│   │   └── CracLifecycleResource.java
-│   ├── http
-│   │   ├── ApplicationHttpServer.java
-│   │   ├── ComputeHandler.java
-│   │   ├── HealthHandler.java
-│   │   ├── HelloHandler.java
-│   │   └── JsonHandler.java
-│   └── util
-│       └── Json.java
-├── scripts
-│   ├── common.sh
-│   ├── 01-build.sh
-│   ├── 02-run-baseline.sh
-│   ├── 03-generate-cds-archive.sh
-│   ├── 04-run-with-cds.sh
-│   ├── 05-generate-appcds-classlist.sh
-│   ├── 06-generate-appcds-archive.sh
-│   ├── 07-run-with-appcds.sh
-│   ├── 08-crac-checkpoint.sh
-│   ├── 09-crac-restore.sh
-│   └── 10-benchmark-all.sh
-├── logs
-│   └── .gitkeep
-└── build/runtime-artifacts
-    └── .gitkeep
+             +-------------------+
+             | Grafana :3000     |
+             | provisioned       |
+             +---------+---------+
+                       |
+                       v
+             +-------------------+
+             | Prometheus :9090  |
+             +---------+---------+
+                       |
+   +-------------------+-------------------+
+   |       |           |           |       |
+ 8081    8082        8083        8084    8085
+ JVM     CDS         AppCDS      CRaC    Native
+```
+
+## Endpoints
+
+Application:
+
+```text
+GET /health
+GET /hello
+GET /compute
+GET /api/users/{id}
+GET /api/orders/{id}
+GET /api/products/{id}
+```
+
+Observability:
+
+```text
+GET /actuator/health
+GET /actuator/prometheus
+```
+
+## Runtime Modes
+
+Set with:
+
+```bash
+APP_RUNTIME_MODE=baseline|cds|appcds|crac|native
+```
+
+Metrics are tagged with:
+
+```text
+app="gateway-demo"
+jdk="25"
+mode="baseline|cds|appcds|crac|native"
+```
+
+Custom metrics:
+
+```text
+app_startup_time_ms
+app_spring_boot_startup_time_ms
+app_first_request_latency_ms
+app_restore_time_ms
+app_jvm_mode
+app_cds_enabled
+app_appcds_enabled
+app_crac_enabled
+app_native_enabled
 ```
 
 ## Requirements
 
-- Java/JDK 25 for building this project.
-- Maven 3.9+.
-- Linux or macOS for CDS/AppCDS scripts.
-- `curl` for health checks in scripts.
-- CRaC requires a CRaC-enabled JDK/build and Linux support. A standard JDK 25 normally supports CDS/AppCDS, but does not necessarily support `-XX:CRaCCheckpointTo`, `-XX:CRaCRestoreFrom`, or `jcmd JDK.checkpoint`.
+- JDK 25
+- Maven 3.9+
+- Docker + Docker Compose
+- `curl`
+- `k6` for load tests
+- GraalVM 25 with `native-image` for local native builds
+- CRaC-enabled JDK for CRaC, for example `25.0.3.crac-zulu`
 
-The project depends on `org.crac:crac:1.5.0`. That library lets the CRaC lifecycle API compile and run on ordinary JDKs, but it does not add checkpoint/restore support to a JVM that lacks CRaC.
-
-Useful references:
-
-- CRaC project overview: https://crac.org/
-- OpenJDK CRaC wiki: https://wiki.openjdk.org/display/crac/Main
-- Azul CRaC usage notes: https://docs.azul.com/core/crac/crac-guidelines
-- `org.crac` Maven artifact: https://central.sonatype.com/artifact/org.crac/crac
-
-## Application
-
-The server listens on port `8080` by default.
-
-Endpoints:
-
-- `GET /health`
-- `GET /hello`
-- `GET /compute`
-
-At startup the application logs a JSON event with:
-
-- `event=application started`
-- JVM version
-- Java vendor
-- PID
-- port
-- startup time in milliseconds
-
-All script logs are written under `logs/`. Runtime archives, class lists, and checkpoint files are written under `build/runtime-artifacts/`.
-
-Override the port with:
+SDKMAN examples:
 
 ```bash
-APP_PORT=9090 scripts/02-run-baseline.sh
+sdk install java 25.0.3.crac-zulu
+sdk install java 25.0.3-graal
+sdk default java 25.0.3.crac-zulu
+```
+
+Check CRaC:
+
+```bash
+java -XX:CRaCCheckpointTo=/tmp/crac-test -version
+```
+
+Check native-image:
+
+```bash
+~/.sdkman/candidates/java/25.0.3-graal/bin/native-image --version
 ```
 
 ## Run From Zero
 
+Use this order from a clean checkout. The order matters because CDS/AppCDS/CRaC/native modes depend on generated build artifacts.
+
 ```bash
+cd /home/sangle/codex/java25-startup-optimization-demo
+
+# 1. Build the Spring Boot gateway jar and dependency classpath.
 scripts/01-build.sh
 
-scripts/02-run-baseline.sh
-
+# 2. Generate JVM CDS and AppCDS runtime artifacts.
 scripts/03-generate-cds-archive.sh
-scripts/04-run-with-cds.sh
-
 scripts/05-generate-appcds-classlist.sh
 scripts/06-generate-appcds-archive.sh
-scripts/07-run-with-appcds.sh
 
-# Only on Linux with a CRaC-enabled JDK/build:
+# 3. Generate the CRaC checkpoint.
+# Requires a CRaC-enabled JDK and Linux support.
 scripts/08-crac-checkpoint.sh
+
+# 4. Build the GraalVM native executable.
+scripts/native/01-build-native.sh
+
+# 5. Start Prometheus and Grafana.
+scripts/monitoring/01-start-monitoring.sh
+
+# 6. Start every monitored runtime mode side by side.
+scripts/monitoring/03-run-baseline-monitored.sh
+scripts/monitoring/04-run-cds-monitored.sh
+scripts/monitoring/05-run-appcds-monitored.sh
+scripts/monitoring/06-run-crac-monitored.sh
+scripts/native/03-run-native-monitored.sh
+```
+
+Open:
+
+```text
+Prometheus: http://localhost:9090
+Grafana:    http://localhost:3000
+Login:      admin / admin
+```
+
+Verify everything is up:
+
+```bash
+for p in 8081 8082 8083 8084 8085; do
+  curl -fsS "http://localhost:$p/actuator/health"
+done
+
+curl -fsS 'http://localhost:9090/api/v1/targets?state=active'
+
+curl -fsS -u admin:admin 'http://localhost:3000/api/search?type=dash-db'
+```
+
+## Individual Runs
+
+```bash
+scripts/02-run-baseline.sh
+scripts/04-run-with-cds.sh
+scripts/07-run-with-appcds.sh
 scripts/09-crac-restore.sh
-
-ITERATIONS=5 scripts/10-benchmark-all.sh
+scripts/native/02-run-native.sh
 ```
 
-To inspect loaded class logging:
+## Full Benchmark
 
 ```bash
-grep "class,load" logs/*.log | wc -l
+ITERATIONS=3 scripts/native/05-compare-all-modes.sh
 ```
 
-## Script Details
+Outputs:
 
-### `01-build.sh`
+```text
+logs/benchmark-results.csv
+logs/benchmark-results.json
+logs/benchmark-results.md
+logs/benchmark-summary.txt
+logs/benchmark-monitoring-results.txt
+logs/benchmark-monitoring-results.csv
+```
 
-Builds the Maven jar and copies runtime dependencies to `target/lib`.
+The benchmark captures:
 
-Output logs:
+- process startup time
+- Spring Boot startup time
+- first request latency
+- warm request latency
+- RSS after startup and warmup
+- heap and non-heap memory
+- CPU usage
+- HTTP throughput from k6
+- HTTP p95 latency from k6
+- GC count and pause time where available
+- loaded classes where available
+- runtime payload/native executable size
 
-- `logs/01-java-version.log`
-- `logs/01-build.log`
+CRaC note: `process_startup_ms` is restore-to-health time. `spring_boot_startup_ms` is empty because Spring Boot startup does not run again after restore.
 
-### `02-run-baseline.sh`
+## Tomorrow Quick Check
 
-Runs the application without a custom archive:
+If the lab is already running, use:
 
 ```bash
-java -Xlog:class+load=info -cp "$CP" com.example.startupdemo.app.StartupOptimizationApplication
+cd /home/sangle/codex/java25-startup-optimization-demo
+
+docker ps
+
+for p in 8081 8082 8083 8084 8085; do
+  echo "checking $p"
+  curl -fsS "http://localhost:$p/actuator/health"
+done
+
+curl -fsS 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D~%22gateway-.*%22%7D'
+curl -fsS -u admin:admin 'http://localhost:3000/api/search?type=dash-db'
 ```
 
-Output log:
-
-- `logs/02-baseline.log`
-
-### `03-generate-cds-archive.sh`
-
-Generates a custom base CDS archive:
+If you want to restart everything cleanly:
 
 ```bash
-java -Xshare:dump \
-  -XX:SharedArchiveFile=build/runtime-artifacts/cds-base.jsa \
-  -Xlog:cds=info
+scripts/monitoring/02-stop-monitoring.sh
+
+scripts/monitoring/01-start-monitoring.sh
+scripts/monitoring/03-run-baseline-monitored.sh
+scripts/monitoring/04-run-cds-monitored.sh
+scripts/monitoring/05-run-appcds-monitored.sh
+scripts/monitoring/06-run-crac-monitored.sh
+scripts/native/03-run-native-monitored.sh
 ```
 
-Output:
-
-- `build/runtime-artifacts/cds-base.jsa`
-- `logs/03-generate-cds-archive.log`
-
-### `04-run-with-cds.sh`
-
-Runs with the generated base CDS archive:
+If you changed source code, regenerate all artifacts first:
 
 ```bash
-java -Xshare:on \
-  -XX:SharedArchiveFile=build/runtime-artifacts/cds-base.jsa \
-  -Xlog:cds=info,class+load=info \
-  -cp "$CP" \
-  com.example.startupdemo.app.StartupOptimizationApplication
+scripts/01-build.sh
+scripts/03-generate-cds-archive.sh
+scripts/05-generate-appcds-classlist.sh
+scripts/06-generate-appcds-archive.sh
+scripts/08-crac-checkpoint.sh
+scripts/native/01-build-native.sh
 ```
 
-Output log:
+## Docker
 
-- `logs/04-cds.log`
-
-### `05-generate-appcds-classlist.sh`
-
-Runs the application and records loaded classes:
+JVM image:
 
 ```bash
-java -XX:DumpLoadedClassList=build/runtime-artifacts/appcds.classlist \
-  -Xlog:class+load=info \
-  -cp "$CP" \
-  com.example.startupdemo.app.StartupOptimizationApplication
+docker build -f Dockerfile.jvm -t gateway-jvm .
 ```
 
-Output:
-
-- `build/runtime-artifacts/appcds.classlist`
-- `logs/05-generate-appcds-classlist.log`
-
-### `06-generate-appcds-archive.sh`
-
-Creates an AppCDS archive from the class list:
+Native image container:
 
 ```bash
-java -Xshare:dump \
-  -XX:SharedClassListFile=build/runtime-artifacts/appcds.classlist \
-  -XX:SharedArchiveFile=build/runtime-artifacts/appcds.jsa \
-  -Xlog:cds=info \
-  -cp "$CP"
+docker build -f Dockerfile.native --target runtime -t gateway-native .
 ```
 
-Output:
-
-- `build/runtime-artifacts/appcds.jsa`
-- `logs/06-generate-appcds-archive.log`
-
-The log also records the equivalent dynamic archive shape using:
+Compose monitoring:
 
 ```bash
-java -XX:ArchiveClassesAtExit=build/runtime-artifacts/appcds-dynamic-at-exit.jsa ...
+docker compose -f docker-compose.monitoring.yml up -d prometheus grafana
 ```
 
-### `07-run-with-appcds.sh`
+Optional app containers are defined with compose profiles, but the default Prometheus config scrapes host-run apps on ports `8081` to `8085`. This avoids down targets when optional containers are not running.
 
-Runs with the generated AppCDS archive:
+## Grafana Dashboards
+
+Provisioned dashboards:
+
+```text
+JVM Startup Optimization Comparison
+Native Image vs JVM
+Memory & Resource Analysis
+Cold Start Comparison
+```
+
+Panels include startup bars, first request latency, CRaC restore time, native cold start, heap/non-heap/RSS memory, CPU usage, loaded classes, GC, HTTP throughput, p95 latency, heatmaps, and ranking tables.
+
+### How To See Metrics In Grafana
+
+1. Open `http://localhost:3000`.
+2. Log in with `admin / admin`.
+3. Open the left menu and go to **Dashboards**.
+4. Open the folder **Startup Monitoring**.
+5. Choose one of these dashboards:
+
+```text
+JVM Startup Optimization Comparison
+Native Image vs JVM
+Memory & Resource Analysis
+Cold Start Comparison
+```
+
+Recommended viewing order:
+
+1. **Cold Start Comparison**
+   - Use this first to see startup time ranking and first request latency.
+   - Key panels: `Cold start by mode`, `First request by mode`, `Ranking all runtime modes`.
+
+2. **JVM Startup Optimization Comparison**
+   - Use this to compare baseline, CDS, AppCDS, CRaC, and native on startup, p95 HTTP latency, and throughput.
+   - Key panels: `Startup time comparison`, `HTTP latency p95`, `Throughput by mode`, `Startup leaderboard`.
+
+3. **Native Image vs JVM**
+   - Use this to focus on native image startup, RSS, CPU, and latency compared with JVM baseline.
+   - Key panels: `Native Image cold start advantage`, `Native vs JVM RSS`, `Native vs JVM CPU usage`.
+
+4. **Memory & Resource Analysis**
+   - Use this for heap, non-heap, process RSS, loaded classes, GC pause, GC count, and CPU.
+   - Native Image may show missing or zero values for some JVM-specific metrics; see Native Image Notes.
+
+### How To See Metrics In Prometheus
+
+Open:
+
+```text
+http://localhost:9090
+```
+
+Go to **Graph**, paste one of the PromQL queries below, and click **Execute**. Use the **Table** tab for exact values and **Graph** for time series.
+
+Check scrape health:
+
+```promql
+up{job=~"gateway-.*"}
+```
+
+You should see five `up = 1` targets:
+
+```text
+gateway-baseline
+gateway-cds
+gateway-appcds
+gateway-crac
+gateway-native
+```
+
+## Important PromQL
+
+Startup:
+
+```promql
+max by (mode) (app_startup_time_ms{app="gateway-demo",jdk="25"})
+```
+
+First request:
+
+```promql
+max by (mode) (app_first_request_latency_ms{app="gateway-demo",jdk="25"})
+```
+
+CRaC restore:
+
+```promql
+max by (mode) (app_restore_time_ms{app="gateway-demo",jdk="25",mode="crac"})
+```
+
+Heap:
+
+```promql
+sum by (mode) (jvm_memory_used_bytes{app="gateway-demo",jdk="25",area="heap"})
+```
+
+RSS:
+
+```promql
+max by (mode) (process_resident_memory_bytes{app="gateway-demo",jdk="25"})
+```
+
+Loaded classes:
+
+```promql
+max by (mode) (jvm_classes_loaded_classes{app="gateway-demo",jdk="25"})
+```
+
+GC pause:
+
+```promql
+sum by (mode) (rate(jvm_gc_pause_seconds_sum{app="gateway-demo",jdk="25"}[1m]))
+```
+
+HTTP throughput:
+
+```promql
+sum by (mode) (rate(http_server_requests_seconds_count{app="gateway-demo",jdk="25"}[1m]))
+```
+
+HTTP p95:
+
+```promql
+histogram_quantile(0.95, sum by (mode,le) (rate(http_server_requests_seconds_bucket{app="gateway-demo",jdk="25"}[1m])))
+```
+
+## Native Image Notes
+
+Native Image advantages:
+
+- very fast process startup
+- low first-request latency
+- no JIT warmup requirement
+- good fit for scale-to-zero and cold-start-sensitive services
+
+Tradeoffs:
+
+- build is slower and more memory intensive
+- native executable can be larger than a thin jar payload
+- peak throughput can differ from JVM JIT behavior
+- reflection/dynamic loading needs AOT hints when used
+- debugging and profiling are different from JVM workflows
+- some JVM metrics are unavailable or behave differently
+
+Observed limitation in this project: native mode emits a warning that GC notifications are unavailable for the native runtime GC MXBeans. GC pause metrics may therefore be empty in Native Image while present in JVM modes. Loaded class counts may also be `0` or not meaningful because Native Image does not load application bytecode like a normal JVM.
+
+## JFR And Flamegraphs
+
+JFR is useful for JVM modes:
 
 ```bash
-java -Xshare:on \
-  -XX:SharedArchiveFile=build/runtime-artifacts/appcds.jsa \
-  -Xlog:cds=info,class+load=info \
-  -cp "$CP" \
-  com.example.startupdemo.app.StartupOptimizationApplication
+java -XX:StartFlightRecording=filename=logs/startup.jfr,dumponexit=true,duration=20s ...
 ```
 
-Output log:
+Native Image does not use the same JIT/compiler runtime profile as a JVM process. Treat JFR/JIT warmup comparisons as JVM-only unless you explicitly build native profiling support.
 
-- `logs/07-appcds.log`
-
-### `08-crac-checkpoint.sh`
-
-Starts the application with a checkpoint target and requests a checkpoint through `jcmd`:
-
-```bash
-java -XX:CRaCCheckpointTo=build/runtime-artifacts/crac-checkpoint \
-  -cp "$CP" \
-  com.example.startupdemo.app.StartupOptimizationApplication
-
-jcmd "$PID" JDK.checkpoint
-```
-
-Output:
-
-- `build/runtime-artifacts/crac-checkpoint/`
-- `logs/08-crac-checkpoint.log`
-
-During checkpoint, `CracLifecycleResource.beforeCheckpoint()` closes the HTTP server so open listening sockets are not captured incorrectly.
-
-### `09-crac-restore.sh`
-
-Restores from the checkpoint:
-
-```bash
-java -XX:CRaCRestoreFrom=build/runtime-artifacts/crac-checkpoint
-```
-
-Output log:
-
-- `logs/09-crac-restore.log`
-
-During restore, `CracLifecycleResource.afterRestore()` reopens the HTTP server.
-
-### `10-benchmark-all.sh`
-
-Runs each available mode multiple times and writes:
-
-- `logs/benchmark-results.txt`
-- `logs/benchmark-baseline-*.log`
-- `logs/benchmark-cds-*.log`
-- `logs/benchmark-appcds-*.log`
-- `logs/benchmark-crac-restore-*.log`
-
-Set the number of iterations:
-
-```bash
-ITERATIONS=10 scripts/10-benchmark-all.sh
-```
-
-## Concepts
-
-### CDS
-
-Class Data Sharing stores JVM metadata for a set of classes in a shared archive. On later JVM starts, class metadata can be memory-mapped from the archive instead of recreated from scratch. CDS is primarily useful for reducing startup cost and memory footprint for classes known to the JVM/runtime.
-
-In this project, `cds-base.jsa` is a custom base archive generated by `-Xshare:dump`.
-
-### AppCDS
-
-Application Class Data Sharing extends the idea to application and dependency classes. The usual flow is:
-
-1. Run the application once with `-XX:DumpLoadedClassList`.
-2. Generate an archive using that class list.
-3. Run later starts with `-Xshare:on` and `-XX:SharedArchiveFile`.
-
-AppCDS is useful when the application repeatedly starts with the same classpath and similar startup code path.
-
-### CRaC
-
-Coordinated Restore at Checkpoint checkpoints a running, initialized JVM process and restores it later. Instead of optimizing class loading alone, CRaC can preserve a warmed application state. It requires lifecycle coordination because open files, sockets, remote connections, timers, credentials, and machine-specific state may not be valid after restore.
-
-This demo registers `CracLifecycleResource`:
-
-- `beforeCheckpoint()` closes the HTTP server.
-- `afterRestore()` starts the HTTP server again.
-
-### CDS/AppCDS vs CRaC
-
-CDS and AppCDS optimize JVM class metadata loading during a normal JVM start. The process still starts from `main()`.
-
-CRaC restores a process image from a previous running state. The restored process does not repeat normal startup in the same way, so its measured restore time can be much lower. The tradeoff is operational complexity: CRaC needs a compatible runtime, OS support, checkpoint storage, and careful resource lifecycle code.
-
-## When To Use Each
-
-Use CDS when:
-
-- you want a low-risk JVM-supported startup optimization
-- the app starts frequently
-- you want modest improvement with minimal code changes
-
-Use AppCDS when:
-
-- startup loads many stable application/dependency classes
-- the deployment classpath is stable
-- you can generate archives as part of build or release
-
-Use CRaC when:
-
-- startup and warmup dominate latency or scaling time
-- the runtime and infrastructure support CRaC
-- the application can safely close and reopen external resources
-- checkpoint images can be protected like sensitive runtime memory
-
-## Interpreting Results
-
-Open `logs/benchmark-results.txt`.
-
-For baseline, CDS, and AppCDS, compare `startupTimeMillis`. This value is emitted by the application after the HTTP server starts. Lower is better.
-
-For CRaC restore, compare `externalRestoreMillis`. This is measured by the shell from launching `java -XX:CRaCRestoreFrom=...` until `/health` responds. It is not identical to `startupTimeMillis`, because a restored process does not execute normal startup from `main()`.
-
-Also inspect class loading logs:
-
-```bash
-grep "class,load" logs/*.log | wc -l
-grep "source: shared objects file" logs/07-appcds.log | wc -l
-```
-
-Class counts are not the same as latency, but they help confirm that archive sharing is being used.
-
-Run each benchmark multiple times. JVM startup measurements are noisy because of filesystem cache, CPU power state, background load, and port reuse timing.
+Startup flamegraphs are intentionally optional because they require platform tooling such as `async-profiler` or `perf` permissions. Add them outside the core benchmark loop to avoid perturbing cold-start numbers.
 
 ## Troubleshooting
 
-### Archive not found
+Prometheus targets:
 
-Run the archive generation step first:
+```bash
+curl 'http://localhost:9090/api/v1/targets?state=active'
+```
+
+Grafana dashboards:
+
+```bash
+curl -u admin:admin 'http://localhost:3000/api/search?type=dash-db'
+```
+
+Stop monitored apps and containers:
+
+```bash
+scripts/monitoring/02-stop-monitoring.sh
+```
+
+Port conflict:
+
+```text
+8081 baseline
+8082 cds
+8083 appcds
+8084 crac
+8085 native
+9090 prometheus
+3000 grafana
+```
+
+CRaC unsupported:
+
+```text
+Unrecognized VM option 'CRaCCheckpointTo=...'
+```
+
+Use a CRaC-enabled JDK.
+
+Native build missing `native-image`:
+
+```bash
+sdk install java 25.0.3-graal
+```
+
+The native build script automatically uses `~/.sdkman/candidates/java/25.0.3-graal` if the active JDK does not provide `native-image`. If no local `native-image` exists, it attempts a Docker BuildKit native export.
+
+CDS/AppCDS archive errors:
 
 ```bash
 scripts/03-generate-cds-archive.sh
@@ -365,69 +486,28 @@ scripts/05-generate-appcds-classlist.sh
 scripts/06-generate-appcds-archive.sh
 ```
 
-### Wrong archive path
+Regenerate archives after changing code, dependencies, JDK, or classpath.
 
-All scripts use paths relative to the repository root. Do not run copied commands from another directory unless you adjust paths.
-
-Expected archive locations:
-
-- `build/runtime-artifacts/cds-base.jsa`
-- `build/runtime-artifacts/appcds.jsa`
-
-### Class list empty
-
-Check:
+## Clean Generated Runtime Data
 
 ```bash
-cat logs/05-generate-appcds-classlist.log
+rm -rf logs build/runtime-artifacts build/native
+mkdir -p logs build/runtime-artifacts build/native
+: > logs/.gitkeep
+: > build/runtime-artifacts/.gitkeep
 ```
 
-Common causes:
+## Current Verified Result Shape
 
-- the application failed before startup
-- port `8080` was already in use
-- the script could not reach `/health`
-- the classpath changed between generation steps
+A successful full run produces rankings similar to:
 
-### CRaC permission issue
-
-CRaC commonly needs Linux kernel and CRIU permissions/capabilities. Depending on your runtime and OS, you may need elevated privileges, relaxed ptrace restrictions, or container options such as `--privileged`.
-
-Check:
-
-```bash
-cat logs/08-crac-checkpoint.log
+```text
+Startup ranking:
+native
+crac
+appcds
+baseline
+cds
 ```
 
-### CRaC unsupported JDK
-
-If you see an error like `Unrecognized VM option 'CRaCCheckpointTo'`, your JVM is not CRaC-enabled. Install and run a CRaC-enabled JDK/build, then ensure `java` and `jcmd` both come from that installation:
-
-```bash
-which java
-which jcmd
-java -version
-```
-
-### Port 8080 already in use
-
-Find and stop the process using the port, or run with another port:
-
-```bash
-APP_PORT=9090 scripts/02-run-baseline.sh
-```
-
-For manual JVM commands, also pass:
-
-```bash
--Ddemo.port=9090
-```
-
-## Limitations
-
-- JDK 25 CDS/AppCDS flags are JVM-specific in their exact behavior. The scripts use common HotSpot flags.
-- AppCDS archives are sensitive to classpath changes. Rebuild the class list and archive after changing application code or dependencies.
-- CDS and AppCDS do not preserve warmed heap state, JIT state, or open resources as a restored process image.
-- CRaC support is not guaranteed in a standard JDK 25 distribution. Use a CRaC-enabled JDK/build on Linux.
-- CRaC checkpoint images can contain secrets from process memory. Treat `build/runtime-artifacts/crac-checkpoint/` as sensitive.
-- CRaC checkpoints are not generally portable across arbitrary kernels, CPUs, containers, or runtime versions.
+Exact numbers vary by CPU load, filesystem cache, and background processes.

@@ -1,0 +1,17 @@
+{
+  "uid": "cold-start-comparison",
+  "title": "Cold Start Comparison",
+  "schemaVersion": 40,
+  "version": 1,
+  "refresh": "5s",
+  "timezone": "browser",
+  "time": {"from": "now-30m", "to": "now"},
+  "tags": ["cold-start", "startup"],
+  "panels": [
+    {"id": 1, "type": "stat", "title": "Fastest observed startup", "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "min(app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\"})", "instant": true}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}},
+    {"id": 2, "type": "barchart", "title": "Cold start by mode", "gridPos": {"x": 6, "y": 0, "w": 10, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\"})", "instant": true}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}},
+    {"id": 3, "type": "barchart", "title": "First request by mode", "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (app_first_request_latency_ms{app=\"gateway-demo\",jdk=\"25\"})", "instant": true}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}},
+    {"id": 4, "type": "timeseries", "title": "Startup CPU sampled after readiness", "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (process_cpu_usage{app=\"gateway-demo\",jdk=\"25\"})"}], "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []}},
+    {"id": 5, "type": "table", "title": "Ranking all runtime modes", "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "sort(max by (mode) (app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\"}))", "instant": true, "format": "table"}]}
+  ]
+}

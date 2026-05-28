@@ -1,0 +1,17 @@
+{
+  "uid": "native-image-vs-jvm",
+  "title": "Native Image vs JVM",
+  "schemaVersion": 40,
+  "version": 1,
+  "refresh": "5s",
+  "timezone": "browser",
+  "time": {"from": "now-30m", "to": "now"},
+  "tags": ["native-image", "graalvm", "jvm"],
+  "panels": [
+    {"id": 1, "type": "barchart", "title": "Native Image cold start advantage", "gridPos": {"x": 0, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|native\"})", "instant": true}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}},
+    {"id": 2, "type": "timeseries", "title": "Native vs JVM CPU usage", "gridPos": {"x": 8, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (process_cpu_usage{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|native\"})"}], "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []}},
+    {"id": 3, "type": "timeseries", "title": "Native vs JVM RSS", "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (process_resident_memory_bytes{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|native\"})"}], "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}},
+    {"id": 4, "type": "heatmap", "title": "HTTP latency heatmap", "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "sum by (le) (rate(http_server_requests_seconds_bucket{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|native\"}[1m]))", "format": "heatmap"}], "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}},
+    {"id": 5, "type": "table", "title": "Native and JVM comparison table", "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|native\"})", "instant": true, "format": "table"}, {"refId": "B", "expr": "max by (mode) (process_resident_memory_bytes{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|native\"})", "instant": true, "format": "table"}]}
+  ]
+}

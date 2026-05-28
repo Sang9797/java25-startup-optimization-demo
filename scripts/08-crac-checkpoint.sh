@@ -14,10 +14,10 @@ rm -rf "${CHECKPOINT_DIR}"
 mkdir -p "${CHECKPOINT_DIR}"
 : > "${LOG_FILE}"
 
+env APP_RUNTIME_MODE=crac APP_JDK=25 APP_NAME=gateway-demo \
 java \
   -XX:CRaCCheckpointTo="${CHECKPOINT_DIR}" \
   -Ddemo.port="${APP_PORT}" \
-  -Ddemo.profile=crac-checkpoint \
   -cp "${CP}" \
   "${MAIN_CLASS}" \
   > "${LOG_FILE}" 2>&1 &
@@ -29,7 +29,7 @@ if ! wait_for_health "${APP_PORT}"; then
   exit 1
 fi
 
-curl -fsS "http://127.0.0.1:${APP_PORT}/compute" >> "${LOG_FILE}" 2>&1 || true
+warm_gateway_endpoints "${APP_PORT}" >> "${LOG_FILE}" 2>&1 || true
 
 echo "Requesting CRaC checkpoint for PID ${PID}" | tee -a "${LOG_FILE}"
 if ! jcmd "${PID}" JDK.checkpoint >> "${LOG_FILE}" 2>&1; then

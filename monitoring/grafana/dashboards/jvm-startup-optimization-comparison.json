@@ -1,0 +1,19 @@
+{
+  "uid": "jvm-startup-optimization-comparison",
+  "title": "JVM Startup Optimization Comparison",
+  "schemaVersion": 40,
+  "version": 1,
+  "refresh": "5s",
+  "timezone": "browser",
+  "time": {"from": "now-30m", "to": "now"},
+  "tags": ["java", "jdk25", "cds", "appcds", "crac", "native"],
+  "panels": [
+    {"id": 1, "type": "barchart", "title": "Startup time comparison", "gridPos": {"x": 0, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\"})", "instant": true}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}},
+    {"id": 2, "type": "barchart", "title": "First request latency comparison", "gridPos": {"x": 8, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (app_first_request_latency_ms{app=\"gateway-demo\",jdk=\"25\"})", "instant": true}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}},
+    {"id": 3, "type": "stat", "title": "CRaC restore time", "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max(app_restore_time_ms{app=\"gateway-demo\",jdk=\"25\",mode=\"crac\"})", "instant": true}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}},
+    {"id": 4, "type": "stat", "title": "Native cold start", "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max(app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\",mode=\"native\"})", "instant": true}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}},
+    {"id": 5, "type": "timeseries", "title": "HTTP latency p95", "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (mode,le) (rate(http_server_requests_seconds_bucket{app=\"gateway-demo\",jdk=\"25\"}[1m])))"}], "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}},
+    {"id": 6, "type": "timeseries", "title": "Throughput by mode", "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "sum by (mode) (rate(http_server_requests_seconds_count{app=\"gateway-demo\",jdk=\"25\"}[1m]))"}], "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}},
+    {"id": 7, "type": "table", "title": "Startup leaderboard", "gridPos": {"x": 0, "y": 16, "w": 24, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "sort(max by (mode) (app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\"}))", "instant": true, "format": "table"}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}}
+  ]
+}

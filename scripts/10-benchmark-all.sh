@@ -39,20 +39,23 @@ benchmark_mode() {
 }
 
 benchmark_mode "baseline" \
-  java -Xlog:class+load=info -Ddemo.port="${APP_PORT}" -Ddemo.profile=benchmark-baseline -cp "${CP}" "${MAIN_CLASS}"
+  env APP_RUNTIME_MODE=baseline APP_JDK=25 APP_NAME=gateway-demo \
+  java -Xlog:class+load=info -Ddemo.port="${APP_PORT}" -cp "${CP}" "${MAIN_CLASS}"
 
 if [[ -f "${CDS_ARCHIVE}" ]]; then
   benchmark_mode "cds" \
+    env APP_RUNTIME_MODE=cds APP_JDK=25 APP_NAME=gateway-demo \
     java -Xshare:on -XX:SharedArchiveFile="${CDS_ARCHIVE}" -Xlog:cds=info,class+load=info \
-    -Ddemo.port="${APP_PORT}" -Ddemo.profile=benchmark-cds -cp "${CP}" "${MAIN_CLASS}"
+    -Ddemo.port="${APP_PORT}" -cp "${CP}" "${MAIN_CLASS}"
 else
   echo "[cds] skipped missing archive ${CDS_ARCHIVE}" >> "${RESULTS}"
 fi
 
 if [[ -f "${APPCDS_ARCHIVE}" ]]; then
   benchmark_mode "appcds" \
+    env APP_RUNTIME_MODE=appcds APP_JDK=25 APP_NAME=gateway-demo \
     java -Xshare:on -XX:SharedArchiveFile="${APPCDS_ARCHIVE}" -Xlog:cds=info,class+load=info \
-    -Ddemo.port="${APP_PORT}" -Ddemo.profile=benchmark-appcds -cp "${CP}" "${MAIN_CLASS}"
+    -Ddemo.port="${APP_PORT}" -cp "${CP}" "${MAIN_CLASS}"
 else
   echo "[appcds] skipped missing archive ${APPCDS_ARCHIVE}" >> "${RESULTS}"
 fi
@@ -63,6 +66,7 @@ if [[ -d "${CRAC_CHECKPOINT_DIR}" ]]; then
     log_file="${LOG_DIR}/benchmark-crac-restore-${iteration}.log"
     : > "${log_file}"
     start_ns="$(date +%s%N)"
+    env APP_RUNTIME_MODE=crac APP_JDK=25 APP_NAME=gateway-demo \
     java -XX:CRaCRestoreFrom="${CRAC_CHECKPOINT_DIR}" > "${log_file}" 2>&1 &
     pid="$!"
     if wait_for_health "${APP_PORT}" 40; then

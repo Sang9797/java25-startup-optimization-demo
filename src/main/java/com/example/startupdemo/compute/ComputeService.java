@@ -1,8 +1,11 @@
 package com.example.startupdemo.compute;
 
+import org.springframework.stereotype.Service;
+
 import java.util.ArrayList;
 import java.util.List;
 
+@Service
 public final class ComputeService {
     private final PrimeCalculator primeCalculator = new PrimeCalculator();
     private final ChecksumCalculator checksumCalculator = new ChecksumCalculator();
