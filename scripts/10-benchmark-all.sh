@@ -55,9 +55,18 @@ if [[ -f "${APPCDS_ARCHIVE}" ]]; then
   benchmark_mode "appcds" \
     env APP_RUNTIME_MODE=appcds APP_JDK=25 APP_NAME=gateway-demo \
     java -Xshare:on -XX:SharedArchiveFile="${APPCDS_ARCHIVE}" -Xlog:cds=info,class+load=info \
-    -Ddemo.port="${APP_PORT}" -cp "${CP}" "${MAIN_CLASS}"
+    -Ddemo.port="${APP_PORT}" -cp "$(appcds_classpath)" "${MAIN_CLASS}"
 else
   echo "[appcds] skipped missing archive ${APPCDS_ARCHIVE}" >> "${RESULTS}"
+fi
+
+if [[ -s "${LEYDEN_AOT_CACHE}" ]]; then
+  benchmark_mode "leyden-aot" \
+    env APP_RUNTIME_MODE=leyden-aot APP_JDK=25 APP_NAME=gateway-demo \
+    java -XX:AOTCache="${LEYDEN_AOT_CACHE}" -Xlog:cds=info,class+load=info \
+    -Ddemo.port="${APP_PORT}" -jar "$(app_boot_jar)"
+else
+  echo "[leyden-aot] skipped missing cache ${LEYDEN_AOT_CACHE}" >> "${RESULTS}"
 fi
 
 if [[ -d "${CRAC_CHECKPOINT_DIR}" ]]; then

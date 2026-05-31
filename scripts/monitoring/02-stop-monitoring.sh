@@ -3,7 +3,7 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common-monitoring.sh"
 
-for mode in baseline cds appcds crac native; do
+for mode in baseline cds appcds crac native leyden-aot; do
   stop_mode_if_running "${mode}"
 done
 

@@ -2,6 +2,7 @@ package com.example.startupdemo.gateway;
 
 import com.example.startupdemo.compute.ComputeService;
 import com.example.startupdemo.config.GatewayProperties;
+import com.example.startupdemo.dependency.DependencyWorkloadService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,10 +16,13 @@ import java.util.Map;
 public class GatewayController {
     private final GatewayProperties properties;
     private final ComputeService computeService;
+    private final DependencyWorkloadService dependencyWorkloadService;
 
-    public GatewayController(GatewayProperties properties, ComputeService computeService) {
+    public GatewayController(GatewayProperties properties, ComputeService computeService,
+                             DependencyWorkloadService dependencyWorkloadService) {
         this.properties = properties;
         this.computeService = computeService;
+        this.dependencyWorkloadService = dependencyWorkloadService;
     }
 
     @GetMapping("/health")
@@ -66,5 +70,15 @@ public class GatewayController {
                 "checksum", result.checksum(),
                 "elapsedMicros", result.elapsedMicros()
         );
+    }
+
+    @GetMapping("/dependencies")
+    Map<String, Object> dependencies() {
+        return dependencyWorkloadService.runRequestWorkload().asMap();
+    }
+
+    @GetMapping("/dependencies/latest")
+    Map<String, Object> latestDependencies() {
+        return dependencyWorkloadService.latestSnapshot().asMap();
     }
 }

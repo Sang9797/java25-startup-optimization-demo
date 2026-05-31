@@ -17,14 +17,13 @@ if [[ ! -s "${CLASSLIST}" ]]; then
 fi
 
 rm -f "${ARCHIVE}" "${DYNAMIC_ARCHIVE}"
-CP="$(app_classpath)"
 
 java \
   -Xshare:dump \
   -XX:SharedClassListFile="${CLASSLIST}" \
   -XX:SharedArchiveFile="${ARCHIVE}" \
   -Xlog:cds=info \
-  -cp "${CP}" \
+  -cp "$(appcds_classpath)" \
   > "${LOG_FILE}" 2>&1
 
 if [[ ! -f "${ARCHIVE}" ]]; then
@@ -34,4 +33,4 @@ fi
 
 echo "Created AppCDS archive: ${ARCHIVE}"
 echo "For dynamic AppCDS experimentation, this command shape is also valid:" >> "${LOG_FILE}"
-echo "java -XX:ArchiveClassesAtExit=${DYNAMIC_ARCHIVE} -cp '${CP}' ${MAIN_CLASS}" >> "${LOG_FILE}"
+echo "java -XX:ArchiveClassesAtExit=${DYNAMIC_ARCHIVE} -cp '$(appcds_classpath)' ${MAIN_CLASS}" >> "${LOG_FILE}"

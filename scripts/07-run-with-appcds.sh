@@ -14,7 +14,6 @@ if [[ ! -f "${ARCHIVE}" ]]; then
   exit 1
 fi
 
-CP="$(app_classpath)"
 run_until_healthy_then_stop "appcds" "${LOG_FILE}" \
   env APP_RUNTIME_MODE=appcds APP_JDK=25 APP_NAME=gateway-demo \
   java \
@@ -22,5 +21,5 @@ run_until_healthy_then_stop "appcds" "${LOG_FILE}" \
   -XX:SharedArchiveFile="${ARCHIVE}" \
   -Xlog:cds=info,class+load=info \
   -Ddemo.port="${APP_PORT}" \
-  -cp "${CP}" \
+  -cp "$(appcds_classpath)" \
   "${MAIN_CLASS}"

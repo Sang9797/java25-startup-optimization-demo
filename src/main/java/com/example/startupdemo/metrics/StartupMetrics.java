@@ -9,6 +9,8 @@ import org.springframework.context.ApplicationListener;
 import org.springframework.stereotype.Component;
 
 import java.lang.management.ManagementFactory;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
@@ -76,8 +78,11 @@ public final class StartupMetrics implements ApplicationListener<ApplicationRead
         Gauge.builder("app.first.request.latency.ms", firstRequestLatencyMs, AtomicLong::get)
                 .description("Elapsed time from process start to the first non-actuator request. -1 means no request observed.")
                 .register(registry);
+        Gauge.builder("process.resident.memory.bytes", this, ignored -> residentMemoryBytes())
+                .description("Resident set size of the current process in bytes.")
+                .register(registry);
         Gauge.builder("app.jvm.mode", this, ignored -> 1.0)
-                .description("Runtime mode marker. The mode tag carries baseline, cds, appcds, or crac.")
+                .description("Runtime mode marker. The mode tag carries baseline, cds, appcds, crac, native, or leyden-aot.")
                 .register(registry);
         Gauge.builder("app.cds.enabled", this, ignored -> enabled("cds"))
                 .description("1 when the configured runtime mode is cds.")
@@ -91,10 +96,29 @@ public final class StartupMetrics implements ApplicationListener<ApplicationRead
         Gauge.builder("app.native.enabled", this, ignored -> enabled("native"))
                 .description("1 when the configured runtime mode is native.")
                 .register(registry);
+        Gauge.builder("app.leyden.aot.enabled", this, ignored -> enabled("leyden-aot"))
+                .description("1 when the configured runtime mode is leyden-aot.")
+                .register(registry);
     }
 
     private double enabled(String expectedMode) {
         return expectedMode.equals(properties.runtimeMode().toLowerCase(Locale.ROOT)) ? 1.0 : 0.0;
+    }
+
+    private double residentMemoryBytes() {
+        try {
+            for (String line : Files.readAllLines(Path.of("/proc/self/status"))) {
+                if (line.startsWith("VmRSS:")) {
+                    String value = line.replaceAll("[^0-9]", "");
+                    if (!value.isBlank()) {
+                        return Long.parseLong(value) * 1024.0;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Fall through to -1 when the host does not expose /proc/self/status.
+        }
+        return -1.0;
     }
 
     public Map<String, Long> snapshot() {

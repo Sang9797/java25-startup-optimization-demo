@@ -15,7 +15,7 @@
     <artifactId>java25-startup-optimization-demo</artifactId>
     <version>1.0.0</version>
     <name>Java 25 Spring Boot Gateway Startup Optimization Demo</name>
-    <description>Spring Boot gateway demo comparing baseline, CDS, AppCDS, and CRaC startup behavior with Prometheus/Grafana monitoring.</description>
+    <description>Spring Boot gateway demo comparing baseline, CDS, AppCDS, Project Leyden AOT cache, CRaC, and Native Image startup behavior with Prometheus/Grafana monitoring.</description>
 
     <properties>
         <maven.compiler.release>25</maven.compiler.release>
@@ -35,8 +35,25 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.crac</groupId>
@@ -130,6 +147,7 @@
                                 <buildArg>-H:+ReportExceptionStackTraces</buildArg>
                                 <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
                                 <buildArg>-H:BuildOutputJSONFile=${project.build.directory}/native-build-output.json</buildArg>
+                                <buildArg>--initialize-at-build-time=ch.qos.logback</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>

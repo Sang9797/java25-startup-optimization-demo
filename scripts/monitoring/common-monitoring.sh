@@ -15,6 +15,7 @@ port_for_mode() {
     appcds) printf '8083\n' ;;
     crac) printf '8084\n' ;;
     native) printf '8085\n' ;;
+    leyden-aot) printf '8086\n' ;;
     *) printf '%s\n' "${APP_PORT}" ;;
   esac
 }
@@ -24,6 +25,7 @@ archive_args_for_mode() {
     baseline) ;;
     cds) printf '%s\n' "-Xshare:on -XX:SharedArchiveFile=${ARTIFACT_DIR}/cds-base.jsa" ;;
     appcds) printf '%s\n' "-Xshare:on -XX:SharedArchiveFile=${ARTIFACT_DIR}/appcds.jsa" ;;
+    leyden-aot) printf '%s\n' "-XX:AOTCache=${LEYDEN_AOT_CACHE}" ;;
     *) ;;
   esac
 }
@@ -39,6 +41,13 @@ require_archive_for_mode() {
     appcds)
       [[ -f "${ARTIFACT_DIR}/appcds.jsa" ]] || {
         echo "Missing AppCDS archive. Run scripts/05-generate-appcds-classlist.sh and scripts/06-generate-appcds-archive.sh first." >&2
+        exit 1
+      }
+      ;;
+    leyden-aot)
+      require_leyden_aot_support
+      [[ -s "${LEYDEN_AOT_CACHE}" ]] || {
+        echo "Missing Leyden AOT cache. Run scripts/11-generate-leyden-aot-cache.sh first." >&2
         exit 1
       }
       ;;
@@ -62,6 +71,7 @@ start_mode_process() {
   local log_file="$3"
   shift 3
 
+  ensure_dependency_services
   stop_mode_if_running "${mode}"
   : > "${log_file}"
   setsid "$@" > "${log_file}" 2>&1 < /dev/null &
@@ -84,15 +94,28 @@ start_standard_mode() {
   local log_file="$3"
   require_built_app
   require_archive_for_mode "${mode}"
-  local cp
-  cp="$(app_classpath)"
   local archive_args
   archive_args="$(archive_args_for_mode "${mode}")"
 
-  # shellcheck disable=SC2086
-  start_mode_process "${mode}" "${port}" "${log_file}" \
-    env APP_RUNTIME_MODE="${mode}" APP_JDK=25 APP_NAME=gateway-demo \
-    java ${archive_args} -Xlog:class+load=info -Ddemo.port="${port}" -cp "${cp}" "${MAIN_CLASS}"
+  if [[ "${mode}" == "leyden-aot" ]]; then
+    # shellcheck disable=SC2086
+    start_mode_process "${mode}" "${port}" "${log_file}" \
+      env APP_RUNTIME_MODE="${mode}" APP_JDK=25 APP_NAME=gateway-demo \
+      java ${archive_args} -Xlog:class+load=info -Ddemo.port="${port}" -jar "$(app_boot_jar)"
+  elif [[ "${mode}" == "appcds" ]]; then
+    # shellcheck disable=SC2086
+    start_mode_process "${mode}" "${port}" "${log_file}" \
+      env APP_RUNTIME_MODE="${mode}" APP_JDK=25 APP_NAME=gateway-demo \
+      java ${archive_args} -Xlog:class+load=info -Ddemo.port="${port}" -cp "$(appcds_classpath)" \
+      "${MAIN_CLASS}"
+  else
+    local cp
+    cp="$(app_classpath)"
+    # shellcheck disable=SC2086
+    start_mode_process "${mode}" "${port}" "${log_file}" \
+      env APP_RUNTIME_MODE="${mode}" APP_JDK=25 APP_NAME=gateway-demo \
+      java ${archive_args} -Xlog:class+load=info -Ddemo.port="${port}" -cp "${cp}" "${MAIN_CLASS}"
+  fi
 }
 
 create_crac_checkpoint_for_monitoring() {
@@ -163,6 +186,7 @@ start_native_mode() {
   exe="$(native_executable)"
   start_mode_process "native" "${port}" "${log_file}" \
     env APP_RUNTIME_MODE=native APP_JDK=25 APP_NAME=gateway-demo SERVER_PORT="${port}" \
+    SPRING_AUTOCONFIGURE_EXCLUDE=org.springframework.boot.autoconfigure.jdbc.DataSourceCheckpointRestoreConfiguration \
     "${exe}"
 }
 
@@ -180,7 +204,9 @@ metric_value() {
   local port="$1"
   local metric="$2"
   local selector="${3:-}"
-  curl -fsS "http://127.0.0.1:${port}/actuator/prometheus" |
+  local metrics
+  metrics="$(curl -fsS "http://127.0.0.1:${port}/actuator/prometheus" 2>/dev/null || true)"
+  printf '%s\n' "${metrics}" |
     awk -v metric="${metric}" -v selector="${selector}" '
       $0 !~ /^#/ && index($0, metric) == 1 {
         if (selector == "" || index($0, selector) > 0) {
@@ -205,7 +231,7 @@ append_benchmark_header() {
   : > "${MONITORING_CSV}"
   echo "Java 25 Spring Boot monitored startup benchmark" >> "${MONITORING_RESULTS}"
   echo "date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "${MONITORING_RESULTS}"
-  echo "mode,iteration,process_startup_ms,spring_boot_startup_ms,first_request_latency_ms,warm_request_latency_ms,rss_after_startup_kb,rss_after_warmup_kb,heap_used_bytes,nonheap_used_bytes,loaded_classes,threads_live,gc_pause_count,gc_pause_sum_seconds,process_cpu_usage,http_reqs_per_sec,http_req_p95_ms,image_size_bytes,log_file" >> "${MONITORING_CSV}"
+  echo "mode,iteration,process_startup_ms,spring_boot_startup_ms,first_request_latency_ms,warm_request_latency_ms,rss_after_startup_kb,rss_after_warmup_kb,heap_used_bytes,nonheap_used_bytes,loaded_classes,threads_live,gc_pause_count,gc_pause_sum_seconds,process_cpu_usage,dependency_postgres_startup_ms,dependency_redis_startup_ms,dependency_kafka_startup_ms,dependency_total_startup_ms,http_reqs_per_sec,http_req_p95_ms,image_size_bytes,log_file" >> "${MONITORING_CSV}"
 }
 
 request_latency_ms() {
@@ -293,6 +319,10 @@ append_benchmark_row() {
   local gc_pause_count
   local gc_pause_sum
   local cpu_usage
+  local dependency_postgres_ms
+  local dependency_redis_ms
+  local dependency_kafka_ms
+  local dependency_total_ms
 
   process_startup_ms="$(extract_startup_ms "${log_file}")"
   spring_boot_startup_ms="$(extract_spring_startup_ms "${log_file}")"
@@ -303,6 +333,10 @@ append_benchmark_row() {
   gc_pause_count="$(metric_value "${port}" "jvm_gc_pause_seconds_count")"
   gc_pause_sum="$(metric_value "${port}" "jvm_gc_pause_seconds_sum")"
   cpu_usage="$(metric_value "${port}" "process_cpu_usage")"
+  dependency_postgres_ms="$(metric_value "${port}" "app_dependency_postgres_startup_ms")"
+  dependency_redis_ms="$(metric_value "${port}" "app_dependency_redis_startup_ms")"
+  dependency_kafka_ms="$(metric_value "${port}" "app_dependency_kafka_startup_ms")"
+  dependency_total_ms="$(metric_value "${port}" "app_dependency_total_startup_ms")"
   local image_size_bytes
   image_size_bytes="$(image_size_bytes_for_mode "${mode}")"
 
@@ -321,11 +355,15 @@ append_benchmark_row() {
     echo "  gcPauseCount=${gc_pause_count:-unknown}"
     echo "  gcPauseSumSeconds=${gc_pause_sum:-unknown}"
     echo "  processCpuUsage=${cpu_usage:-unknown}"
+    echo "  dependencyPostgresStartupMs=${dependency_postgres_ms:-unknown}"
+    echo "  dependencyRedisStartupMs=${dependency_redis_ms:-unknown}"
+    echo "  dependencyKafkaStartupMs=${dependency_kafka_ms:-unknown}"
+    echo "  dependencyTotalStartupMs=${dependency_total_ms:-unknown}"
     echo "  httpReqsPerSecond=${http_reqs_per_sec:-unknown}"
     echo "  httpReqDurationP95Ms=${http_req_p95_ms:-unknown}"
     echo "  imageSizeBytes=${image_size_bytes:-unknown}"
     echo "  loadedClassLogLines=$(class_count_from_log "${log_file}")"
   } >> "${MONITORING_RESULTS}"
 
-  echo "${mode},${iteration},${process_startup_ms:-},${spring_boot_startup_ms:-},${first_latency_ms},${warm_latency_ms:-},${rss_startup_kb},${rss_warmup_kb},${heap_used:-},${nonheap_used:-},${loaded_classes:-},${threads_live:-},${gc_pause_count:-},${gc_pause_sum:-},${cpu_usage:-},${http_reqs_per_sec:-},${http_req_p95_ms:-},${image_size_bytes:-},${log_file}" >> "${MONITORING_CSV}"
+  echo "${mode},${iteration},${process_startup_ms:-},${spring_boot_startup_ms:-},${first_latency_ms},${warm_latency_ms:-},${rss_startup_kb},${rss_warmup_kb},${heap_used:-},${nonheap_used:-},${loaded_classes:-},${threads_live:-},${gc_pause_count:-},${gc_pause_sum:-},${cpu_usage:-},${dependency_postgres_ms:-},${dependency_redis_ms:-},${dependency_kafka_ms:-},${dependency_total_ms:-},${http_reqs_per_sec:-},${http_req_p95_ms:-},${image_size_bytes:-},${log_file}" >> "${MONITORING_CSV}"
 }

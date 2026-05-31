@@ -30,7 +30,7 @@ else
 fi
 
 chmod +x "${NATIVE_EXE}"
-mvn -q -DskipTests package >> "${LOG_FILE}" 2>&1
+mvn -q -DskipTests clean package >> "${LOG_FILE}" 2>&1
 echo "Native executable: ${NATIVE_EXE}"
 echo "Native image size bytes: $(stat -c '%s' "${NATIVE_EXE}")"
 echo "Build log: ${LOG_FILE}"

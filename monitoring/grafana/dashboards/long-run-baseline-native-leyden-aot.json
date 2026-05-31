@@ -1,0 +1,19 @@
+{
+  "uid": "long-run-baseline-native-leyden-aot",
+  "title": "Long Run Baseline, Leyden AOT, and Native",
+  "tags": ["java", "jdk25", "baseline", "leyden-aot", "native", "long-run"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-30m", "to": "now"},
+  "templating": {"list": []},
+  "panels": [
+    {"id": 1, "type": "barchart", "title": "Startup time", "gridPos": {"x": 0, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (max_over_time(app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|leyden-aot|native\"}[$__range]))", "instant": true}], "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []}},
+    {"id": 2, "type": "timeseries", "title": "Throughput", "gridPos": {"x": 8, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "sum by (mode) (rate(http_server_requests_seconds_count{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|leyden-aot|native\"}[1m]))"}], "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}},
+    {"id": 3, "type": "timeseries", "title": "HTTP p95", "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (mode, le) (rate(http_server_requests_seconds_bucket{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|leyden-aot|native\"}[1m])))"}], "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}},
+    {"id": 4, "type": "timeseries", "title": "CPU usage", "gridPos": {"x": 0, "y": 8, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (process_cpu_usage{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|leyden-aot|native\"})"}], "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []}},
+    {"id": 5, "type": "timeseries", "title": "RSS", "gridPos": {"x": 8, "y": 8, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (process_resident_memory_bytes{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|leyden-aot|native\"})"}], "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}},
+    {"id": 6, "type": "table", "title": "Summary", "gridPos": {"x": 16, "y": 8, "w": 8, "h": 8}, "datasource": {"type": "prometheus", "uid": "Prometheus"}, "targets": [{"refId": "A", "expr": "max by (mode) (max_over_time(app_startup_time_ms{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|leyden-aot|native\"}[$__range]))", "instant": true, "format": "table"}, {"refId": "B", "expr": "max by (mode) (max_over_time(process_resident_memory_bytes{app=\"gateway-demo\",jdk=\"25\",mode=~\"baseline|leyden-aot|native\"}[$__range]))", "instant": true, "format": "table"}]}
+  ]
+}

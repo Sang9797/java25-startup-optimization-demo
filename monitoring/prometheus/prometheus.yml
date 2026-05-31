@@ -52,3 +52,12 @@ scrape_configs:
           mode: native
           app: gateway-demo
           jdk: "25"
+
+  - job_name: gateway-leyden-aot
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8086"]
+        labels:
+          mode: leyden-aot
+          app: gateway-demo
+          jdk: "25"

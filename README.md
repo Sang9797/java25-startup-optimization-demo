@@ -5,10 +5,11 @@ Spring Boot gateway benchmark project for comparing:
 - JVM baseline
 - CDS
 - AppCDS
+- Project Leyden AOT Cache
 - CRaC restore
 - GraalVM Native Image
 
-The app is intentionally small: a lightweight HTTP gateway/router with Actuator and Prometheus metrics. It is built to measure cold start, first request latency, memory, CPU, GC, loaded classes, and warm throughput.
+The app is a lightweight HTTP gateway/router with Actuator and Prometheus metrics plus a realistic startup dependency workload. It initializes Postgres, Redis, and Kafka before `ApplicationReadyEvent` so the benchmark captures framework startup plus external client/bootstrap cost.
 
 ## Architecture
 
@@ -23,10 +24,14 @@ The app is intentionally small: a lightweight HTTP gateway/router with Actuator 
              | Prometheus :9090  |
              +---------+---------+
                        |
+        +--------------+--------------+
+        |              |              |
+ Postgres :15432  Redis :16379  Kafka :19092
+        |              |              |
    +-------------------+-------------------+
    |       |           |           |       |
- 8081    8082        8083        8084    8085
- JVM     CDS         AppCDS      CRaC    Native
+  8081    8082        8083        8086        8084    8085
+ JVM     CDS         AppCDS      Leyden     CRaC    Native
 ```
 
 ## Endpoints
@@ -40,6 +45,8 @@ GET /compute
 GET /api/users/{id}
 GET /api/orders/{id}
 GET /api/products/{id}
+GET /dependencies
+GET /dependencies/latest
 ```
 
 Observability:
@@ -54,7 +61,7 @@ GET /actuator/prometheus
 Set with:
 
 ```bash
-APP_RUNTIME_MODE=baseline|cds|appcds|crac|native
+APP_RUNTIME_MODE=baseline|cds|appcds|leyden-aot|crac|native
 ```
 
 Metrics are tagged with:
@@ -62,7 +69,7 @@ Metrics are tagged with:
 ```text
 app="gateway-demo"
 jdk="25"
-mode="baseline|cds|appcds|crac|native"
+mode="baseline|cds|appcds|leyden-aot|crac|native"
 ```
 
 Custom metrics:
@@ -75,8 +82,13 @@ app_restore_time_ms
 app_jvm_mode
 app_cds_enabled
 app_appcds_enabled
+app_leyden_aot_enabled
 app_crac_enabled
 app_native_enabled
+app_dependency_postgres_startup_ms
+app_dependency_redis_startup_ms
+app_dependency_kafka_startup_ms
+app_dependency_total_startup_ms
 ```
 
 ## Requirements
@@ -86,6 +98,7 @@ app_native_enabled
 - Docker + Docker Compose
 - `curl`
 - `k6` for load tests
+- A JDK 25+ build with Project Leyden AOT cache flags for `leyden-aot`
 - GraalVM 25 with `native-image` for local native builds
 - CRaC-enabled JDK for CRaC, for example `25.0.3.crac-zulu`
 
@@ -109,9 +122,63 @@ Check native-image:
 ~/.sdkman/candidates/java/25.0.3-graal/bin/native-image --version
 ```
 
+Check Leyden AOT cache support:
+
+```bash
+java -XX:AOTMode=off -version
+```
+
+## Recommended Comparison Script
+
+Use `scripts/compare.sh` as the main entrypoint. It lets you choose the modes and comparison type, then takes care of building the jar, starting Postgres/Redis/Kafka, generating required CDS/AppCDS/Leyden AOT/CRaC/native artifacts, starting monitoring when needed, and writing results.
+
+```bash
+# Remove old logs before a fresh test phase.
+find logs -type f -name '*.log' -delete
+
+# Default: baseline vs native cold/startup comparison.
+scripts/compare.sh
+
+# Compare selected cold-start/runtime modes.
+scripts/compare.sh --modes baseline,cds,appcds,leyden-aot,native --type cold --iterations 3 --skip-native-build
+
+# Cold comparison with longer Leyden AOT cache training before the run.
+LEYDEN_AOT_TRAINING_DURATION=3m LEYDEN_AOT_TRAINING_VUS=4 \
+  scripts/compare.sh --modes baseline,cds,appcds,leyden-aot,native --type cold --iterations 3 --skip-native-build
+
+# Long-run sequential baseline, Leyden AOT cache, and native comparison after JVM warmup.
+# Leyden AOT cache generation respects LEYDEN_AOT_TRAINING_DURATION and
+# LEYDEN_AOT_TRAINING_VUS, so you can widen the training pass before the run.
+LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
+  scripts/compare.sh --modes baseline,leyden-aot,native --type long --skip-native-build
+
+# Fast command test for baseline, Leyden AOT cache, and native.
+LONG_WARMUP_DURATION=1s LONG_DURATION=2s LONG_K6_VUS=1 LONG_SAMPLE_INTERVAL_SECONDS=1 \
+  scripts/compare.sh --modes baseline,leyden-aot,native --type long --iterations 1 --skip-build --skip-native-build --no-monitoring
+
+# Live Grafana baseline, Leyden AOT cache, and native comparison under equal concurrent load.
+LONG_DURATION=30m LONG_K6_VUS=8 \
+  scripts/compare.sh --modes baseline,leyden-aot,native --type grafana --skip-native-build
+
+# Training-focused cache pass before the comparison.
+LEYDEN_AOT_TRAINING_DURATION=3m LEYDEN_AOT_TRAINING_VUS=4 \
+  scripts/compare.sh --modes baseline,leyden-aot,native --type long --skip-native-build
+```
+
+Outputs for cold selected-mode comparisons:
+
+```text
+logs/compare-summary.md
+logs/benchmark-monitoring-results.csv
+logs/benchmark-monitoring-results.txt
+```
+
+Use `--skip-build` and `--skip-native-build` only when you know existing artifacts are current.
+
 ## Run From Zero
 
-Use this order from a clean checkout. The order matters because CDS/AppCDS/CRaC/native modes depend on generated build artifacts.
+Use this order from a clean checkout. The order matters because CDS/AppCDS/Leyden AOT/CRaC/native modes depend on generated build artifacts.
+The run and benchmark scripts automatically start Postgres, Redis, and Kafka from `docker-compose.monitoring.yml`. To run without external dependencies for a quick smoke test, set `DEPENDENCY_WORKLOAD_ENABLED=false`.
 
 ```bash
 cd /home/sangle/codex/java25-startup-optimization-demo
@@ -119,10 +186,16 @@ cd /home/sangle/codex/java25-startup-optimization-demo
 # 1. Build the Spring Boot gateway jar and dependency classpath.
 scripts/01-build.sh
 
-# 2. Generate JVM CDS and AppCDS runtime artifacts.
+# 2. Generate JVM CDS, AppCDS, and Leyden AOT runtime artifacts.
+# These steps start Postgres, Redis, and Kafka because the AppCDS class list
+# and Leyden AOT cache are generated from a real dependency-backed application startup.
+# The Leyden AOT cache step keeps the app alive for a configurable k6 training
+# pass across /health, /hello, /compute, /api/*, /dependencies, and /dependencies/latest
+# before the cache is written.
 scripts/03-generate-cds-archive.sh
 scripts/05-generate-appcds-classlist.sh
 scripts/06-generate-appcds-archive.sh
+scripts/11-generate-leyden-aot-cache.sh
 
 # 3. Generate the CRaC checkpoint.
 # Requires a CRaC-enabled JDK and Linux support.
@@ -138,6 +211,7 @@ scripts/monitoring/01-start-monitoring.sh
 scripts/monitoring/03-run-baseline-monitored.sh
 scripts/monitoring/04-run-cds-monitored.sh
 scripts/monitoring/05-run-appcds-monitored.sh
+scripts/monitoring/08-run-leyden-aot-monitored.sh
 scripts/monitoring/06-run-crac-monitored.sh
 scripts/native/03-run-native-monitored.sh
 ```
@@ -153,7 +227,7 @@ Login:      admin / admin
 Verify everything is up:
 
 ```bash
-for p in 8081 8082 8083 8084 8085; do
+for p in 8081 8082 8083 8086 8084 8085; do
   curl -fsS "http://localhost:$p/actuator/health"
 done
 
@@ -168,6 +242,7 @@ curl -fsS -u admin:admin 'http://localhost:3000/api/search?type=dash-db'
 scripts/02-run-baseline.sh
 scripts/04-run-with-cds.sh
 scripts/07-run-with-appcds.sh
+scripts/12-run-with-leyden-aot.sh
 scripts/09-crac-restore.sh
 scripts/native/02-run-native.sh
 ```
@@ -200,11 +275,145 @@ The benchmark captures:
 - CPU usage
 - HTTP throughput from k6
 - HTTP p95 latency from k6
+- Postgres, Redis, Kafka, and total dependency startup timings
 - GC count and pause time where available
 - loaded classes where available
 - runtime payload/native executable size
 
 CRaC note: `process_startup_ms` is restore-to-health time. `spring_boot_startup_ms` is empty because Spring Boot startup does not run again after restore.
+
+## Long-Run Baseline, Leyden AOT, and Native
+
+Use this benchmark when you want one run that includes the JVM baseline, Project Leyden AOT cache, and native image. It uses the same dependency workload and k6 traffic shape as the pairwise long-run scripts, but keeps the comparison set in one command.
+The Leyden AOT cache step respects LEYDEN_AOT_TRAINING_DURATION and LEYDEN_AOT_TRAINING_VUS if you want a longer cache-training pass before the benchmark begins.
+
+```bash
+scripts/01-build.sh
+scripts/11-generate-leyden-aot-cache.sh
+scripts/native/01-build-native.sh
+
+# Fast command test.
+LONG_WARMUP_DURATION=1s LONG_DURATION=2s LONG_K6_VUS=1 LONG_SAMPLE_INTERVAL_SECONDS=1 ITERATIONS=1 \
+  scripts/compare.sh --modes baseline,leyden-aot,native --type long --skip-build --skip-native-build --no-monitoring
+
+# Standard long-run benchmark.
+LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
+  scripts/compare.sh --modes baseline,leyden-aot,native --type long --skip-native-build
+
+# Live Grafana run.
+LONG_DURATION=30m LONG_K6_VUS=8 \
+  scripts/compare.sh --modes baseline,leyden-aot,native --type grafana --skip-native-build
+
+# Longer Leyden AOT cache training before the same three-mode run.
+LEYDEN_AOT_TRAINING_DURATION=3m LEYDEN_AOT_TRAINING_VUS=4 \
+  scripts/compare.sh --modes baseline,leyden-aot,native --type grafana --skip-native-build
+```
+
+Outputs:
+
+```text
+logs/long-run/baseline-native-leyden-aot-summary.md
+logs/long-run/baseline-native-leyden-aot-summary.csv
+logs/long-run/baseline-native-leyden-aot-samples.csv
+```
+
+Open the combined dashboard:
+
+```text
+http://localhost:3000/d/long-run-baseline-native-leyden-aot/long-run-baseline-native-leyden-aot
+```
+
+## Long-Run Baseline vs Native
+
+Use this benchmark to evaluate steady-state behavior after the JVM baseline has had time to warm up and JIT optimize hot paths. It runs baseline and native sequentially against the same Postgres, Redis, Kafka dependency workload.
+
+```bash
+scripts/01-build.sh
+scripts/native/01-build-native.sh
+
+# Quick long-run check.
+LONG_WARMUP_DURATION=60s LONG_DURATION=10m LONG_K6_VUS=8 \
+  scripts/native/06-long-run-baseline-vs-native.sh
+
+# Stronger signal for steady-state comparison.
+LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
+  scripts/native/06-long-run-baseline-vs-native.sh
+```
+
+Outputs:
+
+```text
+logs/long-run/baseline-vs-native-summary.md
+logs/long-run/baseline-vs-native-summary.csv
+logs/long-run/baseline-vs-native-samples.csv
+```
+
+The summary compares throughput, average/p95/p99 latency, failure rate, RSS, CPU, startup time, and image size. Treat startup and memory as native's usual strengths; treat throughput and p95/p99 latency after warmup as the main evidence for whether native is better for a long-running service.
+
+For live Grafana evaluation, run baseline and native side by side with equal k6 traffic:
+
+```bash
+scripts/01-build.sh
+scripts/native/01-build-native.sh
+
+LONG_DURATION=30m LONG_K6_VUS=8 \
+  scripts/native/07-grafana-long-run-baseline-vs-native.sh
+```
+
+Open:
+
+```text
+http://localhost:3000/d/long-run-baseline-vs-native/long-run-baseline-vs-native
+```
+
+This live dashboard shows CPU, RSS, heap/non-heap where available, throughput, p95, p99, average latency, HTTP error rate, GC activity, thread count, request mix by endpoint, startup time, and dependency startup cost. For strict final numbers, prefer the sequential `06-long-run-baseline-vs-native.sh` script because concurrent side-by-side runs share CPU and dependency-service capacity.
+
+## Long-Run Native vs Leyden AOT Cache
+
+Use this benchmark to compare Native Image against Project Leyden AOT Cache for startup and sustained load. It uses the same dependency workload and k6 traffic shape as the baseline-vs-native benchmark.
+
+```bash
+scripts/01-build.sh
+scripts/11-generate-leyden-aot-cache.sh
+scripts/native/01-build-native.sh
+
+# Fast command test. Use this to validate the script path before a real run.
+LONG_WARMUP_DURATION=1s LONG_DURATION=2s LONG_K6_VUS=1 LONG_SAMPLE_INTERVAL_SECONDS=1 ITERATIONS=1 \
+  scripts/native/08-long-run-native-vs-leyden-aot.sh
+
+# Quick long-run check.
+LONG_WARMUP_DURATION=60s LONG_DURATION=10m LONG_K6_VUS=8 \
+  scripts/native/08-long-run-native-vs-leyden-aot.sh
+
+# Stronger signal for steady-state comparison.
+LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
+  scripts/native/08-long-run-native-vs-leyden-aot.sh
+```
+
+Outputs:
+
+```text
+logs/long-run/native-vs-leyden-aot-summary.md
+logs/long-run/native-vs-leyden-aot-summary.csv
+logs/long-run/native-vs-leyden-aot-samples.csv
+```
+
+For live Grafana evaluation, run Leyden AOT cache and native side by side with equal k6 traffic:
+
+```bash
+scripts/01-build.sh
+scripts/11-generate-leyden-aot-cache.sh
+scripts/native/01-build-native.sh
+
+LONG_DURATION=30m LONG_K6_VUS=8 \
+  scripts/native/09-grafana-long-run-native-vs-leyden-aot.sh
+```
+
+Open:
+
+```text
+http://localhost:3000/d/long-run-native-vs-leyden-aot/long-run-native-vs-leyden-aot
+```
 
 ## Tomorrow Quick Check
 
@@ -215,13 +424,14 @@ cd /home/sangle/codex/java25-startup-optimization-demo
 
 docker ps
 
-for p in 8081 8082 8083 8084 8085; do
+for p in 8081 8082 8083 8086 8084 8085; do
   echo "checking $p"
   curl -fsS "http://localhost:$p/actuator/health"
 done
 
 curl -fsS 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D~%22gateway-.*%22%7D'
 curl -fsS -u admin:admin 'http://localhost:3000/api/search?type=dash-db'
+curl -fsS 'http://localhost:8081/dependencies/latest'
 ```
 
 If you want to restart everything cleanly:
@@ -233,6 +443,7 @@ scripts/monitoring/01-start-monitoring.sh
 scripts/monitoring/03-run-baseline-monitored.sh
 scripts/monitoring/04-run-cds-monitored.sh
 scripts/monitoring/05-run-appcds-monitored.sh
+scripts/monitoring/08-run-leyden-aot-monitored.sh
 scripts/monitoring/06-run-crac-monitored.sh
 scripts/native/03-run-native-monitored.sh
 ```
@@ -244,6 +455,7 @@ scripts/01-build.sh
 scripts/03-generate-cds-archive.sh
 scripts/05-generate-appcds-classlist.sh
 scripts/06-generate-appcds-archive.sh
+scripts/11-generate-leyden-aot-cache.sh
 scripts/08-crac-checkpoint.sh
 scripts/native/01-build-native.sh
 ```
@@ -268,7 +480,7 @@ Compose monitoring:
 docker compose -f docker-compose.monitoring.yml up -d prometheus grafana
 ```
 
-Optional app containers are defined with compose profiles, but the default Prometheus config scrapes host-run apps on ports `8081` to `8085`. This avoids down targets when optional containers are not running.
+Postgres, Redis, and Kafka are part of the default compose stack because app startup depends on them. They are exposed on host ports `15432`, `16379`, and `19092` to avoid common local service conflicts. Optional app containers are defined with compose profiles, but the default Prometheus config scrapes host-run apps on ports `8081` to `8086`. This avoids down targets when optional containers are not running.
 
 ## Grafana Dashboards
 
@@ -279,9 +491,12 @@ JVM Startup Optimization Comparison
 Native Image vs JVM
 Memory & Resource Analysis
 Cold Start Comparison
+Long Run Baseline vs Native
+Long Run Native vs Leyden AOT Cache
 ```
 
-Panels include startup bars, first request latency, CRaC restore time, native cold start, heap/non-heap/RSS memory, CPU usage, loaded classes, GC, HTTP throughput, p95 latency, heatmaps, and ranking tables.
+Panels include startup bars, first request latency, Leyden AOT cache startup, CRaC restore time, native cold start, heap/non-heap/RSS memory, CPU usage, loaded classes, GC, HTTP throughput, p95 latency, heatmaps, and ranking tables.
+The long-run dashboard adds p99 latency, HTTP error rate, request mix, and side-by-side CPU/RSS/GC views for baseline and native under sustained load.
 
 ### How To See Metrics In Grafana
 
@@ -296,6 +511,8 @@ JVM Startup Optimization Comparison
 Native Image vs JVM
 Memory & Resource Analysis
 Cold Start Comparison
+Long Run Baseline vs Native
+Long Run Native vs Leyden AOT Cache
 ```
 
 Recommended viewing order:
@@ -305,7 +522,7 @@ Recommended viewing order:
    - Key panels: `Cold start by mode`, `First request by mode`, `Ranking all runtime modes`.
 
 2. **JVM Startup Optimization Comparison**
-   - Use this to compare baseline, CDS, AppCDS, CRaC, and native on startup, p95 HTTP latency, and throughput.
+   - Use this to compare baseline, CDS, AppCDS, Leyden AOT, CRaC, and native on startup, p95 HTTP latency, and throughput.
    - Key panels: `Startup time comparison`, `HTTP latency p95`, `Throughput by mode`, `Startup leaderboard`.
 
 3. **Native Image vs JVM**
@@ -315,6 +532,14 @@ Recommended viewing order:
 4. **Memory & Resource Analysis**
    - Use this for heap, non-heap, process RSS, loaded classes, GC pause, GC count, and CPU.
    - Native Image may show missing or zero values for some JVM-specific metrics; see Native Image Notes.
+
+5. **Long Run Baseline vs Native**
+   - Use this while running sustained load to decide whether Native Image remains better after JVM JIT warmup.
+   - Key panels: `Throughput`, `Latency p95`, `Latency p99`, `CPU Usage`, `RSS Memory`, `HTTP Error Rate`, `GC Pause Rate`, `Dependency Startup Breakdown`.
+
+6. **Long Run Native vs Leyden AOT Cache**
+   - Use this while running sustained load to compare Native Image against Leyden AOT cache startup, throughput, latency, CPU, RSS, GC, and dependency startup cost.
+   - Key panels: `Startup Time`, `Throughput`, `Latency p95`, `Latency p99`, `CPU Usage`, `JVM Memory Used`, `Current Comparison Snapshot`.
 
 ### How To See Metrics In Prometheus
 
@@ -332,12 +557,13 @@ Check scrape health:
 up{job=~"gateway-.*"}
 ```
 
-You should see five `up = 1` targets:
+You should see six `up = 1` targets:
 
 ```text
 gateway-baseline
 gateway-cds
 gateway-appcds
+gateway-leyden-aot
 gateway-crac
 gateway-native
 ```
@@ -360,6 +586,12 @@ CRaC restore:
 
 ```promql
 max by (mode) (app_restore_time_ms{app="gateway-demo",jdk="25",mode="crac"})
+```
+
+Leyden AOT cache marker:
+
+```promql
+max(app_leyden_aot_enabled{app="gateway-demo",jdk="25",mode="leyden-aot"})
 ```
 
 Heap:
@@ -396,6 +628,15 @@ HTTP p95:
 
 ```promql
 histogram_quantile(0.95, sum by (mode,le) (rate(http_server_requests_seconds_bucket{app="gateway-demo",jdk="25"}[1m])))
+```
+
+Dependency startup:
+
+```promql
+max by (mode) (app_dependency_total_startup_ms{app="gateway-demo",jdk="25"})
+max by (mode) (app_dependency_postgres_startup_ms{app="gateway-demo",jdk="25"})
+max by (mode) (app_dependency_redis_startup_ms{app="gateway-demo",jdk="25"})
+max by (mode) (app_dependency_kafka_startup_ms{app="gateway-demo",jdk="25"})
 ```
 
 ## Native Image Notes
@@ -456,8 +697,12 @@ Port conflict:
 8081 baseline
 8082 cds
 8083 appcds
+8086 leyden-aot
 8084 crac
 8085 native
+15432 postgres
+16379 redis
+19092 kafka
 9090 prometheus
 3000 grafana
 ```
@@ -487,6 +732,16 @@ scripts/06-generate-appcds-archive.sh
 ```
 
 Regenerate archives after changing code, dependencies, JDK, or classpath.
+
+Leyden AOT cache errors:
+
+```bash
+scripts/11-generate-leyden-aot-cache.sh
+scripts/12-run-with-leyden-aot.sh
+```
+
+Regenerate the AOT cache after changing code, dependencies, JDK, classpath, or startup training traffic.
+You can tune the training pass with `LEYDEN_AOT_TRAINING_DURATION` and `LEYDEN_AOT_TRAINING_VUS`.
 
 ## Clean Generated Runtime Data
 

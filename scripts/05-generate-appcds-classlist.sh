@@ -10,14 +10,13 @@ CLASSLIST="${ARTIFACT_DIR}/appcds.classlist"
 LOG_FILE="${LOG_DIR}/05-generate-appcds-classlist.log"
 rm -f "${CLASSLIST}"
 
-CP="$(app_classpath)"
 run_until_healthy_then_stop "appcds-classlist" "${LOG_FILE}" \
   env APP_RUNTIME_MODE=appcds APP_JDK=25 APP_NAME=gateway-demo \
   java \
   -XX:DumpLoadedClassList="${CLASSLIST}" \
   -Xlog:class+load=info \
   -Ddemo.port="${APP_PORT}" \
-  -cp "${CP}" \
+  -cp "$(appcds_classpath)" \
   "${MAIN_CLASS}"
 
 if [[ ! -s "${CLASSLIST}" ]]; then

@@ -4,6 +4,33 @@ spring:
   threads:
     virtual:
       enabled: true
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://127.0.0.1:15432/startup_demo}
+    username: ${POSTGRES_USER:startup}
+    password: ${POSTGRES_PASSWORD:startup}
+    hikari:
+      maximum-pool-size: ${POSTGRES_POOL_SIZE:4}
+      minimum-idle: ${POSTGRES_MIN_IDLE:1}
+      connection-timeout: ${POSTGRES_CONNECTION_TIMEOUT_MS:5000}
+      initialization-fail-timeout: ${POSTGRES_INIT_FAIL_TIMEOUT_MS:5000}
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:16379}
+      timeout: ${REDIS_TIMEOUT:5s}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:19092}
+    admin:
+      fail-fast: true
+      properties:
+        request.timeout.ms: ${KAFKA_REQUEST_TIMEOUT_MS:5000}
+        default.api.timeout.ms: ${KAFKA_DEFAULT_API_TIMEOUT_MS:5000}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        delivery.timeout.ms: ${KAFKA_DELIVERY_TIMEOUT_MS:10000}
+        request.timeout.ms: ${KAFKA_REQUEST_TIMEOUT_MS:5000}
 
 server:
   port: ${SERVER_PORT:${demo.port:8080}}
@@ -12,6 +39,10 @@ gateway:
   app-name: ${APP_NAME:gateway-demo}
   jdk: ${APP_JDK:25}
   runtime-mode: ${APP_RUNTIME_MODE:baseline}
+  dependency-workload:
+    enabled: ${DEPENDENCY_WORKLOAD_ENABLED:true}
+    kafka-topic: ${DEPENDENCY_KAFKA_TOPIC:startup-demo-events}
+    timeout-ms: ${DEPENDENCY_TIMEOUT_MS:10000}
 
 management:
   endpoints:

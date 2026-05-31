@@ -122,6 +122,12 @@ else
   echo "Skipping appcds: missing ${ARTIFACT_DIR}/appcds.jsa" | tee -a "${MONITORING_RESULTS}"
 fi
 
+if [[ -s "${LEYDEN_AOT_CACHE}" ]]; then
+  benchmark_standard_mode leyden-aot
+else
+  echo "Skipping leyden-aot: missing ${LEYDEN_AOT_CACHE}" | tee -a "${MONITORING_RESULTS}"
+fi
+
 if java -XX:CRaCCheckpointTo=/tmp/crac-probe -version >/dev/null 2>&1; then
   benchmark_crac_mode
 else

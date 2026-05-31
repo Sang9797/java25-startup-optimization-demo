@@ -1,0 +1,10 @@
+[
+  {
+    "name": "com.zaxxer.hikari.pool.HikariPool",
+    "fields": [
+      {
+        "name": "closeConnectionExecutor"
+      }
+    ]
+  }
+]
