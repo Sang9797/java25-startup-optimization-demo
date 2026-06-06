@@ -23,6 +23,14 @@
         <main.class>com.example.startupdemo.app.StartupOptimizationApplication</main.class>
         <native.image.name>gateway-native</native.image.name>
         <native.maven.plugin.version>0.10.6</native.maven.plugin.version>
+        <native.image.extra.0>--no-fallback</native.image.extra.0>
+        <native.image.extra.1>--no-fallback</native.image.extra.1>
+        <native.image.extra.2>--no-fallback</native.image.extra.2>
+        <native.image.extra.3>--no-fallback</native.image.extra.3>
+        <native.image.extra.4>--no-fallback</native.image.extra.4>
+        <native.image.extra.5>--no-fallback</native.image.extra.5>
+        <native.image.extra.6>--no-fallback</native.image.extra.6>
+        <native.image.extra.7>--no-fallback</native.image.extra.7>
     </properties>
 
     <dependencies>
@@ -148,6 +156,14 @@
                                 <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
                                 <buildArg>-H:BuildOutputJSONFile=${project.build.directory}/native-build-output.json</buildArg>
                                 <buildArg>--initialize-at-build-time=ch.qos.logback</buildArg>
+                                <buildArg>${native.image.extra.0}</buildArg>
+                                <buildArg>${native.image.extra.1}</buildArg>
+                                <buildArg>${native.image.extra.2}</buildArg>
+                                <buildArg>${native.image.extra.3}</buildArg>
+                                <buildArg>${native.image.extra.4}</buildArg>
+                                <buildArg>${native.image.extra.5}</buildArg>
+                                <buildArg>${native.image.extra.6}</buildArg>
+                                <buildArg>${native.image.extra.7}</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>

@@ -123,11 +123,13 @@ create_crac_checkpoint_for_monitoring() {
   require_built_app
   local port="$1"
   local checkpoint_dir="${ARTIFACT_DIR}/crac-checkpoint-monitoring"
-  local log_file="${LOG_DIR}/monitoring-crac-checkpoint.log"
+  local log_dir="${CRAC_MONITORING_LOG_DIR:-${LOG_DIR}}"
+  local log_file="${log_dir}/monitoring-crac-checkpoint.log"
   local cp
   cp="$(app_classpath)"
   rm -rf "${checkpoint_dir}"
   mkdir -p "${checkpoint_dir}"
+  mkdir -p "${log_dir}"
   : > "${log_file}"
 
   env APP_RUNTIME_MODE=crac APP_JDK=25 APP_NAME=gateway-demo \
@@ -208,10 +210,10 @@ metric_value() {
   metrics="$(curl -fsS "http://127.0.0.1:${port}/actuator/prometheus" 2>/dev/null || true)"
   printf '%s\n' "${metrics}" |
     awk -v metric="${metric}" -v selector="${selector}" '
-      $0 !~ /^#/ && index($0, metric) == 1 {
+      found == 0 && $0 !~ /^#/ && index($0, metric) == 1 {
         if (selector == "" || index($0, selector) > 0) {
           print $NF
-          exit
+          found = 1
         }
       }'
 }
@@ -272,8 +274,10 @@ run_k6_load() {
   local mode="$1"
   local port="$2"
   local iteration="$3"
-  local summary_file="${LOG_DIR}/k6-${mode}-${iteration}.json"
-  local log_file="${LOG_DIR}/k6-${mode}-${iteration}.log"
+  local log_dir="${K6_LOG_DIR:-${LOG_DIR}}"
+  local summary_file="${log_dir}/k6-${mode}-${iteration}.json"
+  local log_file="${log_dir}/k6-${mode}-${iteration}.log"
+  mkdir -p "${log_dir}"
   if ! command -v k6 >/dev/null 2>&1; then
     echo ","
     return 0

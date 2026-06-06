@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="${ROOT_DIR}/logs"
+LOG_DIR="${LOG_DIR:-${ROOT_DIR}/logs}"
 ARTIFACT_DIR="${ROOT_DIR}/build/runtime-artifacts"
 TARGET_DIR="${ROOT_DIR}/target"
 APP_JAR="${TARGET_DIR}/java25-startup-optimization-demo-1.0.0.jar"

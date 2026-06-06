@@ -130,7 +130,7 @@ java -XX:AOTMode=off -version
 
 ## Recommended Comparison Script
 
-Use `scripts/compare.sh` as the main entrypoint. It lets you choose the modes and comparison type, then takes care of building the jar, starting Postgres/Redis/Kafka, generating required CDS/AppCDS/Leyden AOT/CRaC/native artifacts, starting monitoring when needed, and writing results.
+Use `scripts/compare.sh` as the main entrypoint for multi-mode runs. It handles jar builds, dependency services, mode-specific artifacts, monitoring, and result output.
 
 ```bash
 # Remove old logs before a fresh test phase.
@@ -138,39 +138,17 @@ find logs -type f -name '*.log' -delete
 
 # Default: baseline vs native cold/startup comparison.
 scripts/compare.sh
-
-# Compare selected cold-start/runtime modes.
-scripts/compare.sh --modes baseline,cds,appcds,leyden-aot,native --type cold --iterations 3 --skip-native-build
-
-# Cold comparison with longer Leyden AOT cache training before the run.
-LEYDEN_AOT_TRAINING_DURATION=3m LEYDEN_AOT_TRAINING_VUS=4 \
-  scripts/compare.sh --modes baseline,cds,appcds,leyden-aot,native --type cold --iterations 3 --skip-native-build
-
-# Long-run sequential baseline, Leyden AOT cache, and native comparison after JVM warmup.
-# Leyden AOT cache generation respects LEYDEN_AOT_TRAINING_DURATION and
-# LEYDEN_AOT_TRAINING_VUS, so you can widen the training pass before the run.
-LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
-  scripts/compare.sh --modes baseline,leyden-aot,native --type long --skip-native-build
-
-# Fast command test for baseline, Leyden AOT cache, and native.
-LONG_WARMUP_DURATION=1s LONG_DURATION=2s LONG_K6_VUS=1 LONG_SAMPLE_INTERVAL_SECONDS=1 \
-  scripts/compare.sh --modes baseline,leyden-aot,native --type long --iterations 1 --skip-build --skip-native-build --no-monitoring
-
-# Live Grafana baseline, Leyden AOT cache, and native comparison under equal concurrent load.
-LONG_DURATION=30m LONG_K6_VUS=8 \
-  scripts/compare.sh --modes baseline,leyden-aot,native --type grafana --skip-native-build
-
-# Training-focused cache pass before the comparison.
-LEYDEN_AOT_TRAINING_DURATION=3m LEYDEN_AOT_TRAINING_VUS=4 \
-  scripts/compare.sh --modes baseline,leyden-aot,native --type long --skip-native-build
 ```
+
+Detailed single-mode, native-mode, and mixed-mode examples are in the `Workflows` section below.
 
 Outputs for cold selected-mode comparisons:
 
 ```text
-logs/compare-summary.md
-logs/benchmark-monitoring-results.csv
-logs/benchmark-monitoring-results.txt
+logs/cold-<mode-list>/compare-summary.md
+logs/cold-<mode-list>/benchmark-monitoring-results.csv
+logs/cold-<mode-list>/benchmark-monitoring-results.txt
+logs/cold-<mode-list>/<mode>/
 ```
 
 Use `--skip-build` and `--skip-native-build` only when you know existing artifacts are current.
@@ -236,7 +214,17 @@ curl -fsS 'http://localhost:9090/api/v1/targets?state=active'
 curl -fsS -u admin:admin 'http://localhost:3000/api/search?type=dash-db'
 ```
 
-## Individual Runs
+## Workflows
+
+### Single Mode
+
+Build the shared application artifact first:
+
+```bash
+scripts/01-build.sh
+```
+
+Run one mode at a time:
 
 ```bash
 scripts/02-run-baseline.sh
@@ -247,197 +235,179 @@ scripts/09-crac-restore.sh
 scripts/native/02-run-native.sh
 ```
 
-## Full Benchmark
+Generate per-mode prerequisites only when needed:
 
 ```bash
-ITERATIONS=3 scripts/native/05-compare-all-modes.sh
+scripts/03-generate-cds-archive.sh
+scripts/05-generate-appcds-classlist.sh
+scripts/06-generate-appcds-archive.sh
+scripts/11-generate-leyden-aot-cache.sh
+scripts/08-crac-checkpoint.sh
 ```
 
-Outputs:
+### Native Mode
+
+Default native build:
+
+```bash
+scripts/native/01-build-native.sh
+scripts/native/02-run-native.sh
+```
+
+PGO flow:
+
+```bash
+scripts/native/04-build-native-pgo-instrumented.sh
+scripts/native/02-run-native.sh
+k6 run load-tests/k6-gateway.js
+scripts/native/05-build-native-pgo-optimized.sh
+```
+
+Native build variants:
+
+```bash
+# Targeted compatibility help for migration.
+NATIVE_PRESERVE='package=com.example.startupdemo.dependency.*' \
+  scripts/native/01-build-native.sh
+
+# Export SBOM when using Oracle GraalVM.
+NATIVE_ENABLE_SBOM=classpath,export \
+  scripts/native/01-build-native.sh
+
+# Enable advanced obfuscation when using Oracle GraalVM.
+NATIVE_ENABLE_OBFUSCATION=true \
+NATIVE_ENABLE_SBOM=export \
+  scripts/native/01-build-native.sh
+
+# Pass extra native-image flags directly.
+NATIVE_EXTRA_ARGS='-O3 -march=native' \
+  scripts/native/01-build-native.sh
+```
+
+Export the SBOM from an existing native binary:
+
+```bash
+scripts/native/06-export-native-sbom.sh
+```
+
+Native build artifacts:
 
 ```text
-logs/benchmark-results.csv
-logs/benchmark-results.json
-logs/benchmark-results.md
-logs/benchmark-summary.txt
-logs/benchmark-monitoring-results.txt
-logs/benchmark-monitoring-results.csv
+build/native/gateway-native
+build/native/default.iprof
+build/native/gateway-native.sbom.json
+target/native-build-report.html
+target/native-build-output.json
 ```
 
-The benchmark captures:
+Notes:
 
-- process startup time
-- Spring Boot startup time
-- first request latency
-- warm request latency
-- RSS after startup and warmup
-- heap and non-heap memory
-- CPU usage
-- HTTP throughput from k6
-- HTTP p95 latency from k6
-- Postgres, Redis, Kafka, and total dependency startup timings
-- GC count and pause time where available
-- loaded classes where available
-- runtime payload/native executable size
+- `--enable-sbom`, advanced obfuscation, and PGO are Oracle GraalVM features.
+- `NATIVE_PGO_MODE=instrument|optimize` is also supported directly by `scripts/native/01-build-native.sh`.
+- Use `-H:Preserve` as a migration aid, then narrow back down to explicit hints.
 
-CRaC note: `process_startup_ms` is restore-to-health time. `spring_boot_startup_ms` is empty because Spring Boot startup does not run again after restore.
+### Mixed Mode
 
-## Long-Run Baseline, Leyden AOT, and Native
+Use `scripts/compare.sh` as the main entrypoint for multi-mode runs. It builds missing artifacts, starts dependency services, and writes outputs under `logs/<type>-<mode-list>/`.
 
-Use this benchmark when you want one run that includes the JVM baseline, Project Leyden AOT cache, and native image. It uses the same dependency workload and k6 traffic shape as the pairwise long-run scripts, but keeps the comparison set in one command.
-The Leyden AOT cache step respects LEYDEN_AOT_TRAINING_DURATION and LEYDEN_AOT_TRAINING_VUS if you want a longer cache-training pass before the benchmark begins.
+Cold comparison:
 
 ```bash
-scripts/01-build.sh
-scripts/11-generate-leyden-aot-cache.sh
-scripts/native/01-build-native.sh
+scripts/compare.sh --modes baseline,native --type cold --iterations 3
+scripts/compare.sh --modes baseline,cds,appcds,leyden-aot,native --type cold --iterations 3 --skip-native-build
+scripts/compare.sh --modes baseline,cds,appcds,leyden-aot,crac,native --type cold --iterations 3
+```
 
-# Fast command test.
-LONG_WARMUP_DURATION=1s LONG_DURATION=2s LONG_K6_VUS=1 LONG_SAMPLE_INTERVAL_SECONDS=1 ITERATIONS=1 \
-  scripts/compare.sh --modes baseline,leyden-aot,native --type long --skip-build --skip-native-build --no-monitoring
+Long sequential comparison:
 
-# Standard long-run benchmark.
+```bash
 LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
   scripts/compare.sh --modes baseline,leyden-aot,native --type long --skip-native-build
 
-# Live Grafana run.
+LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
+  scripts/compare.sh --modes baseline,native --type long --skip-native-build
+
+LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
+  scripts/compare.sh --modes native,leyden-aot --type long --skip-native-build
+```
+
+Live Grafana comparison:
+
+```bash
 LONG_DURATION=30m LONG_K6_VUS=8 \
   scripts/compare.sh --modes baseline,leyden-aot,native --type grafana --skip-native-build
 
-# Longer Leyden AOT cache training before the same three-mode run.
+LONG_DURATION=30m LONG_K6_VUS=8 \
+  scripts/compare.sh --modes baseline,native --type grafana --skip-native-build
+
+LONG_DURATION=30m LONG_K6_VUS=8 \
+  scripts/compare.sh --modes native,leyden-aot --type grafana --skip-native-build
+```
+
+Fast smoke-test form:
+
+```bash
+LONG_WARMUP_DURATION=1s LONG_DURATION=2s LONG_K6_VUS=1 LONG_SAMPLE_INTERVAL_SECONDS=1 \
+  scripts/compare.sh --modes baseline,leyden-aot,native --type long --iterations 1 --skip-build --skip-native-build --no-monitoring
+```
+
+Leyden cache retraining:
+
+```bash
 LEYDEN_AOT_TRAINING_DURATION=3m LEYDEN_AOT_TRAINING_VUS=4 \
-  scripts/compare.sh --modes baseline,leyden-aot,native --type grafana --skip-native-build
+  scripts/compare.sh --modes baseline,leyden-aot,native --type long --skip-native-build
 ```
 
-Outputs:
+Native-aware `compare.sh` options:
+
+```bash
+# Build, train, and benchmark a PGO-optimized native image in one flow.
+scripts/compare.sh --modes baseline,native --type cold --native-build-mode pgo-auto
+
+# Benchmark an already-built PGO-optimized native executable.
+scripts/compare.sh --modes native --type long --native-build-mode pgo-optimize --skip-native-build
+
+# Benchmark a native build with targeted preservation.
+scripts/compare.sh --modes native --type cold \
+  --native-preserve 'package=com.example.startupdemo.dependency.*'
+
+# Benchmark a native build with SBOM export.
+scripts/compare.sh --modes native --type cold --native-sbom classpath,export
+
+# Benchmark a native build with obfuscation.
+scripts/compare.sh --modes native --type cold --native-obfuscation --native-sbom export
+```
+
+Common outputs:
 
 ```text
-logs/long-run/baseline-native-leyden-aot-summary.md
-logs/long-run/baseline-native-leyden-aot-summary.csv
-logs/long-run/baseline-native-leyden-aot-samples.csv
+logs/cold-<mode-list>/compare-summary.md
+logs/cold-<mode-list>/benchmark-monitoring-results.csv
+logs/cold-<mode-list>/benchmark-monitoring-results.txt
+logs/cold-<mode-list>/<mode>/
+
+logs/long-run-<mode-list>/<mode-list>-summary.md
+logs/long-run-<mode-list>/<mode-list>-summary.csv
+logs/long-run-<mode-list>/<mode-list>-samples.csv
+logs/long-run-<mode-list>/<mode>/
 ```
 
-Open the combined dashboard:
+Benchmark metrics include startup time, Spring Boot startup time, first and warm request latency, RSS, heap and non-heap usage, CPU, dependency startup cost, throughput, HTTP p95, GC counters, loaded classes, and image size where available.
 
-```text
-http://localhost:3000/d/long-run-baseline-native-leyden-aot/long-run-baseline-native-leyden-aot
-```
+CRaC note: `process_startup_ms` is restore-to-health time. `spring_boot_startup_ms` stays empty because Spring Boot startup does not run again after restore.
 
-## Long-Run Baseline vs Native
+### Full Lab
 
-Use this benchmark to evaluate steady-state behavior after the JVM baseline has had time to warm up and JIT optimize hot paths. It runs baseline and native sequentially against the same Postgres, Redis, Kafka dependency workload.
+Build every artifact, then run all monitored modes side by side:
 
 ```bash
 scripts/01-build.sh
-scripts/native/01-build-native.sh
-
-# Quick long-run check.
-LONG_WARMUP_DURATION=60s LONG_DURATION=10m LONG_K6_VUS=8 \
-  scripts/native/06-long-run-baseline-vs-native.sh
-
-# Stronger signal for steady-state comparison.
-LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
-  scripts/native/06-long-run-baseline-vs-native.sh
-```
-
-Outputs:
-
-```text
-logs/long-run/baseline-vs-native-summary.md
-logs/long-run/baseline-vs-native-summary.csv
-logs/long-run/baseline-vs-native-samples.csv
-```
-
-The summary compares throughput, average/p95/p99 latency, failure rate, RSS, CPU, startup time, and image size. Treat startup and memory as native's usual strengths; treat throughput and p95/p99 latency after warmup as the main evidence for whether native is better for a long-running service.
-
-For live Grafana evaluation, run baseline and native side by side with equal k6 traffic:
-
-```bash
-scripts/01-build.sh
-scripts/native/01-build-native.sh
-
-LONG_DURATION=30m LONG_K6_VUS=8 \
-  scripts/native/07-grafana-long-run-baseline-vs-native.sh
-```
-
-Open:
-
-```text
-http://localhost:3000/d/long-run-baseline-vs-native/long-run-baseline-vs-native
-```
-
-This live dashboard shows CPU, RSS, heap/non-heap where available, throughput, p95, p99, average latency, HTTP error rate, GC activity, thread count, request mix by endpoint, startup time, and dependency startup cost. For strict final numbers, prefer the sequential `06-long-run-baseline-vs-native.sh` script because concurrent side-by-side runs share CPU and dependency-service capacity.
-
-## Long-Run Native vs Leyden AOT Cache
-
-Use this benchmark to compare Native Image against Project Leyden AOT Cache for startup and sustained load. It uses the same dependency workload and k6 traffic shape as the baseline-vs-native benchmark.
-
-```bash
-scripts/01-build.sh
+scripts/03-generate-cds-archive.sh
+scripts/05-generate-appcds-classlist.sh
+scripts/06-generate-appcds-archive.sh
 scripts/11-generate-leyden-aot-cache.sh
+scripts/08-crac-checkpoint.sh
 scripts/native/01-build-native.sh
-
-# Fast command test. Use this to validate the script path before a real run.
-LONG_WARMUP_DURATION=1s LONG_DURATION=2s LONG_K6_VUS=1 LONG_SAMPLE_INTERVAL_SECONDS=1 ITERATIONS=1 \
-  scripts/native/08-long-run-native-vs-leyden-aot.sh
-
-# Quick long-run check.
-LONG_WARMUP_DURATION=60s LONG_DURATION=10m LONG_K6_VUS=8 \
-  scripts/native/08-long-run-native-vs-leyden-aot.sh
-
-# Stronger signal for steady-state comparison.
-LONG_WARMUP_DURATION=5m LONG_DURATION=30m LONG_K6_VUS=16 \
-  scripts/native/08-long-run-native-vs-leyden-aot.sh
-```
-
-Outputs:
-
-```text
-logs/long-run/native-vs-leyden-aot-summary.md
-logs/long-run/native-vs-leyden-aot-summary.csv
-logs/long-run/native-vs-leyden-aot-samples.csv
-```
-
-For live Grafana evaluation, run Leyden AOT cache and native side by side with equal k6 traffic:
-
-```bash
-scripts/01-build.sh
-scripts/11-generate-leyden-aot-cache.sh
-scripts/native/01-build-native.sh
-
-LONG_DURATION=30m LONG_K6_VUS=8 \
-  scripts/native/09-grafana-long-run-native-vs-leyden-aot.sh
-```
-
-Open:
-
-```text
-http://localhost:3000/d/long-run-native-vs-leyden-aot/long-run-native-vs-leyden-aot
-```
-
-## Tomorrow Quick Check
-
-If the lab is already running, use:
-
-```bash
-cd /home/sangle/codex/java25-startup-optimization-demo
-
-docker ps
-
-for p in 8081 8082 8083 8086 8084 8085; do
-  echo "checking $p"
-  curl -fsS "http://localhost:$p/actuator/health"
-done
-
-curl -fsS 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D~%22gateway-.*%22%7D'
-curl -fsS -u admin:admin 'http://localhost:3000/api/search?type=dash-db'
-curl -fsS 'http://localhost:8081/dependencies/latest'
-```
-
-If you want to restart everything cleanly:
-
-```bash
-scripts/monitoring/02-stop-monitoring.sh
 
 scripts/monitoring/01-start-monitoring.sh
 scripts/monitoring/03-run-baseline-monitored.sh
@@ -448,16 +418,25 @@ scripts/monitoring/06-run-crac-monitored.sh
 scripts/native/03-run-native-monitored.sh
 ```
 
-If you changed source code, regenerate all artifacts first:
+Stop everything:
 
 ```bash
-scripts/01-build.sh
-scripts/03-generate-cds-archive.sh
-scripts/05-generate-appcds-classlist.sh
-scripts/06-generate-appcds-archive.sh
-scripts/11-generate-leyden-aot-cache.sh
-scripts/08-crac-checkpoint.sh
-scripts/native/01-build-native.sh
+scripts/monitoring/02-stop-monitoring.sh
+```
+
+### Quick Check
+
+If the lab is already running:
+
+```bash
+docker ps
+
+for p in 8081 8082 8083 8086 8084 8085; do
+  curl -fsS "http://localhost:$p/actuator/health"
+done
+
+curl -fsS 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D~%22gateway-.*%22%7D'
+curl -fsS -u admin:admin 'http://localhost:3000/api/search?type=dash-db'
 ```
 
 ## Docker
